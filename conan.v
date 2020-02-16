@@ -3,8 +3,8 @@
 
 module conan #(
 	parameter BAUD = 250000,
-	parameter LEN_BITS = 8,
-	parameter LEN_FIFO_BITS = 7,
+	parameter LEN_BITS = 6,
+	parameter LEN_FIFO_BITS = 5,
 	parameter MOVE_COUNT = 512,
 	parameter NGPIO_OUT = 40,
 	parameter NGPIO_IN = 40,
@@ -112,7 +112,12 @@ module conan #(
 	inout wire uart4,
 	inout wire uart5,
 	inout wire uart6,
-	output wire [6:1] step,
+	output wire step1,
+	output wire step2,
+	output wire step3,
+	output wire step4,
+	output wire step5,
+	output wire step6,
 	output wire dir1,
 	output wire dir2,
 	output wire dir3,
@@ -174,6 +179,10 @@ module conan #(
 wire clk; 
 `ifdef VERILATOR
 assign clk = clk_48mhz;
+reg _drclk = 0;
+always @(posedge clk)
+	_drclk <= !_drclk;
+assign drclk = _drclk;
 `else
 pll u_pll(
 	.clkin(clk_48mhz),
@@ -190,9 +199,7 @@ wire msg_ready;
 wire msg_rd_en;
 
 /* max length of a packet MCU -> host */
-localparam LEN_BITS = 6;
 /* address width of fifo */
-localparam LEN_FIFO_BITS = 5;
 /* size of receive ring (2^x) */
 localparam RING_BITS = 8;
 localparam CMD_ACKNAK = 8'h7b;
@@ -207,7 +214,7 @@ framing #(
 	.RING_BITS(RING_BITS),
 	.LEN_BITS(LEN_BITS),
 	.LEN_FIFO_BITS(LEN_FIFO_BITS),
-	.HZ(24000000),
+	.HZ(24000000)
 ) u_framing (
 	.clk(clk),
 
@@ -237,12 +244,9 @@ framing #(
 	/* reset */
 	.error(frame_error),
 	.clr(frame_reset)
+/* verilator lint_on PINCONNECTEMPTY */
 );
 
-localparam NGPIO = 4;
-localparam NPWM = 12;
-wire [NGPIO-1:0] gpio;
-wire [NPWM-1:0] pwm;
 wire [63:0] cmd_debug;
 
 command #(
@@ -257,7 +261,7 @@ command #(
 	.NUART(NUART)
 ) u_command (
 	.clk(clk),
-	.time(clock),
+	.systime(systime),
 
 	/*
 	 * receive side
@@ -281,23 +285,23 @@ command #(
 	/* I/O */
 	.gpio_out(),
 	.gpio_in(),
-	.pwm(),
-	.step(step),
+	.pwm({ pwm12, pwm11, pwm10, pwm9, pwm8, pwm7, pwm6, pwm5, pwm4, pwm3, pwm2, pwm1 }),
+	.step({ step6, step5, step4, step3, step2, step1 }),
 	.dir({ dir6, dir5, dir4, dir3, dir2, dir1 }),
-	.endstop(),
-	.uart(),
+	.endstop({ endstop8, endstop7, endstop6, endstop5, endstop4, endstop3, endstop2, endstop1 }),
+	.uart({ uart6, uart5, uart4, uart3, uart2, uart1 }),
 	.debug(cmd_debug)
 );
 
 /*
  * on-board LEDs
  */
-reg [63:0] clock = 0;
+reg [63:0] systime = 0;
 reg [7:0] leds = 8'b00000001;
 assign { led8, led7, led6, led5, led4, led3, led2, led1 } = leds;
 always @(posedge clk) begin
-	clock <= clock + 1;
-	if (clock[20:0] == 0) begin
+	systime <= systime + 1;
+	if (systime[20:0] == 0) begin
 		leds <= { leds[6:0], leds[7] };
 	end
 end
@@ -306,22 +310,6 @@ end
  * Stepper driver
  */
 assign enn = 1'b1;
-
-/*
- * PWM
- */
-assign pwm1 = 1'b0;
-assign pwm2 = 1'b0;
-assign pwm3 = 1'b0;
-assign pwm4 = 1'b0;
-assign pwm5 = 1'b0;
-assign pwm6 = 1'b0;
-assign pwm7 = 1'b0;
-assign pwm8 = 1'b0;
-assign pwm9 = 1'b0;
-assign pwm10 = 1'b0;
-assign pwm11 = 1'b0;
-assign pwm12 = 1'b0;
 
 /*
  * watchdog
@@ -417,32 +405,32 @@ assign ldata[190] =  esp_gpio2;
 assign ldata[189] =  esp_flash;
 assign ldata[188] =  esp_rx;
 
-assign ldata[187] = step[1];
+assign ldata[187] = step1;
 assign ldata[186] = dir1;
 assign ldata[185] = uart1;
 assign ldata[184] = index1;
 assign ldata[183] = diag1;
-assign ldata[182] = step[2];
+assign ldata[182] = step2;
 assign ldata[181] = dir2;
 assign ldata[180] = uart2;
 assign ldata[179] = index2;
 assign ldata[178] = diag2;
-assign ldata[177] = step[3];
+assign ldata[177] = step3;
 assign ldata[176] = dir3;
 assign ldata[175] = uart3;
 assign ldata[174] = index3;
 assign ldata[173] = diag3;
-assign ldata[172] = step[4];
+assign ldata[172] = step4;
 assign ldata[171] = dir4;
 assign ldata[170] = uart4;
 assign ldata[169] = index4;
 assign ldata[168] = diag4;
-assign ldata[167] = step[5];
+assign ldata[167] = step5;
 assign ldata[166] = dir5;
 assign ldata[165] = uart5;
 assign ldata[164] = index5;
 assign ldata[163] = diag5;
-assign ldata[162] = step[6];
+assign ldata[162] = step6;
 assign ldata[161] = dir6;
 assign ldata[160] = uart6;
 assign ldata[159] = index6;
@@ -483,10 +471,11 @@ assign ldata[129] = fpga5;
 assign ldata[128] = fpga6;
 
 assign ldata[127] = clk_48mhz;
+assign ldata[126] = clk_50mhz;
 
-assign ldata[126:64] = 0;
+assign ldata[125:64] = 0;
 
-assign ldata[63:0] = clock;
+assign ldata[63:0] = systime;
 
 /*
  * direct output for scope debugging

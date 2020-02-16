@@ -1,0 +1,5 @@
+`verilator_config
+lint_off -rule PINCONNECTEMPTY
+lint_off -rule WIDTH
+lint_off -rule UNUSED
+lint_off -rule BLKSEQ -file "uart.v"

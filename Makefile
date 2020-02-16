@@ -17,7 +17,7 @@ $(TARGET).json: $(SRC) $(TARGET).lpf Makefile
 	ecppack --compress --svf-rowsize 100000 --svf $(TARGET).svf $< $@
 
 verilate:
-	verilator -Wall -cc --exe $(TARGET).v tb.cpp
+	verilator -Wall -cc --exe $(TARGET).v verilator.vlt tb.cpp
 	make -j 4 -C obj_dir -f V$(TARGET).mk
 	obj_dir/V$(TARGET)
 
