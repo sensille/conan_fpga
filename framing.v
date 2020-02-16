@@ -251,7 +251,7 @@ localparam SST_DATA = 3'd3;	/* read data */
 localparam SST_CRC1 = 3'd4;	/* read crc1 */
 localparam SST_CRC2 = 3'd5;	/* read crc2 */
 localparam SST_EOF = 3'd6;	/* read sync byte (end of frame) */
-reg [2:0] send_state = RST_SOF;
+reg [2:0] send_state = SST_IDLE;
 
 /*
  * send state machine

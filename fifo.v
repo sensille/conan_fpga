@@ -21,7 +21,7 @@ module fifo #(
 	// read side
 	output reg [DATA_WIDTH - 1 : 0] dout = 0,
 	input wire rd_en,
-	output reg empty,
+	output reg empty = 1,
 
 	// status
 	output wire [ADDR_WIDTH - 1 : 0] elemcnt
