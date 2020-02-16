@@ -87,6 +87,7 @@ localparam CMD_SCHEDULE_PWM	= 7;
 localparam NCMDS		= 7;
 localparam CMD_BITS = $clog2(NCMDS);
 
+/* BAD HACK, should go away soon */
 wire [ARGS_BITS-1:0] ARGS_0 = 0;
 wire [ARGS_BITS-1:0] ARGS_1 = 1;
 wire [ARGS_BITS-1:0] ARGS_2 = 2;
