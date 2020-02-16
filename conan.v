@@ -1,8 +1,18 @@
 `timescale 1ns / 1ps
 `default_nettype none
 
-module conan
-(
+module conan #(
+	parameter BAUD = 250000,
+	parameter LEN_BITS = 8,
+	parameter LEN_FIFO_BITS = 7,
+	parameter MOVE_COUNT = 512,
+	parameter NGPIO_OUT = 40,
+	parameter NGPIO_IN = 40,
+	parameter NPWM = 12,
+	parameter NSTEPDIR = 6,
+	parameter NENDSTOP = 8,
+	parameter NUART = 6
+) (
 	input wire clk_50mhz,
 	input wire clk_48mhz,
 	output wire led1,
@@ -102,12 +112,7 @@ module conan
 	inout wire uart4,
 	inout wire uart5,
 	inout wire uart6,
-	output wire step1,
-	output wire step2,
-	output wire step3,
-	output wire step4,
-	output wire step5,
-	output wire step6,
+	output wire [6:1] step,
 	output wire dir1,
 	output wire dir2,
 	output wire dir3,
@@ -160,27 +165,135 @@ module conan
 	input wire fpga6
 );
 
+/*
+ * PLL
+ *
+ * 48MHz in -> 24MHz system clock
+ *          -> 12MHz stepper driver clock
+ */
 wire clk; 
 `ifdef VERILATOR
-assign clk = clk_50mhz;
+assign clk = clk_48mhz;
 `else
 pll u_pll(
-	.clkin(clk_50mhz),
-	.clkout0(clk)		// 20 MHz
+	.clkin(clk_48mhz),
+	.clkout0(clk),		// 24 MHz
+	.clkout1(drclk)		// 12 MHz
 );
 `endif
 
-wire [255:0] ldata;
-led7219 u_led7219(
+/*
+ * communication interface to MCU
+ */
+wire [7:0] msg_data;
+wire msg_ready;
+wire msg_rd_en;
+
+/* max length of a packet MCU -> host */
+localparam LEN_BITS = 6;
+/* address width of fifo */
+localparam LEN_FIFO_BITS = 5;
+/* size of receive ring (2^x) */
+localparam RING_BITS = 8;
+localparam CMD_ACKNAK = 8'h7b;
+wire [LEN_BITS-1:0] send_fifo_data;
+wire send_fifo_wr_en;
+wire [7:0] send_ring_data;
+wire send_ring_wr_en;
+wire frame_reset = 1'b0;
+wire frame_error;
+framing #(
+	.BAUD(BAUD),
+	.RING_BITS(RING_BITS),
+	.LEN_BITS(LEN_BITS),
+	.LEN_FIFO_BITS(LEN_FIFO_BITS),
+	.HZ(24000000),
+) u_framing (
 	.clk(clk),
-	.data(ldata),
-	.leds_out(exp2_17),
-	.leds_cs(exp2_16),
-	.leds_clk(exp2_15)
+
+	.rx(fpga1),
+	.tx(fpga2),
+	.cts(),
+
+	/*
+	 * receive side
+	 */
+	.msg_data(msg_data),
+	.msg_ready(msg_ready),
+	.msg_rd_en(msg_rd_en),
+
+	/*
+	 * send side
+	 */
+	.send_fifo_wr_en(send_fifo_wr_en),
+	.send_fifo_data(send_fifo_data),
+	.send_fifo_full(),
+
+	/* ring buffer input */
+	.send_ring_data(send_ring_data),
+	.send_ring_wr_en(send_ring_wr_en),
+	.send_ring_full(),
+
+	/* reset */
+	.error(frame_error),
+	.clr(frame_reset)
 );
 
+localparam NGPIO = 4;
+localparam NPWM = 12;
+wire [NGPIO-1:0] gpio;
+wire [NPWM-1:0] pwm;
+wire [63:0] cmd_debug;
+
+command #(
+	.LEN_BITS(LEN_BITS),
+	.LEN_FIFO_BITS(LEN_FIFO_BITS),
+	.MOVE_COUNT(MOVE_COUNT),
+	.NGPIO_OUT(NGPIO_OUT),
+	.NGPIO_IN(NGPIO_IN),
+	.NPWM(NPWM),
+	.NSTEPDIR(NSTEPDIR),
+	.NENDSTOP(NENDSTOP),
+	.NUART(NUART)
+) u_command (
+	.clk(clk),
+	.time(clock),
+
+	/*
+	 * receive side
+	 */
+	.msg_data(msg_data),
+	.msg_ready(msg_ready),
+	.msg_rd_en(msg_rd_en),
+
+	/*
+	 * send side
+	 */
+	.send_fifo_wr_en(send_fifo_wr_en),
+	.send_fifo_data(send_fifo_data),
+	.send_fifo_full(),
+
+	/* ring buffer input */
+	.send_ring_data(send_ring_data),
+	.send_ring_wr_en(send_ring_wr_en),
+	.send_ring_full(),
+
+	/* I/O */
+	.gpio_out(),
+	.gpio_in(),
+	.pwm(),
+	.step(step),
+	.dir({ dir6, dir5, dir4, dir3, dir2, dir1 }),
+	.endstop(),
+	.uart(),
+	.debug(cmd_debug)
+);
+
+/*
+ * on-board LEDs
+ */
 reg [63:0] clock = 0;
-reg [7:0] leds = 8'b11111110;
+reg [7:0] leds = 8'b00000001;
 assign { led8, led7, led6, led5, led4, led3, led2, led1 } = leds;
 always @(posedge clk) begin
 	clock <= clock + 1;
@@ -190,117 +303,43 @@ always @(posedge clk) begin
 end
 
 /*
- * TMC uart mux
- *
- * Idea: push every input null to output, after transition back to high
- *       push high for 4 clock, and then leave the rest to the pull-up
- *       Transmit every 0 that's not from the mcu itself to the mcu
+ * Stepper driver
  */
-wire uart_in = fpga1;
-reg uart_out = 1;
-assign fpga2 = uart_out;
-reg uart_tmc_out = 1;
-reg uart_tmc_out_enable = 0;
-wire uart_tmc_in;
-reg [2:0] ustate = 0;
-localparam US_IDLE = 0;
-localparam US_TX = 1;
-localparam US_PUSH1 = 2;
-localparam US_PUSH2 = 3;
-localparam US_PUSH3 = 4;
-localparam US_PUSH4 = 5;
+assign enn = 1'b1;
 
-
-// just mirror config to all drivers
-assign uart1 = uart_tmc_out_enable ? uart_tmc_out : 1'bz;
-assign uart2 = uart_tmc_out_enable ? uart_tmc_out : 1'bz;
-assign uart3 = uart_tmc_out_enable ? uart_tmc_out : 1'bz;
-assign uart4 = uart_tmc_out_enable ? uart_tmc_out : 1'bz;
-assign uart5 = uart_tmc_out_enable ? uart_tmc_out : 1'bz;
-assign uart6 = uart_tmc_out_enable ? uart_tmc_out : 1'bz;
-
-assign uart_tmc_in = uart1;
-
-always @(posedge clk) begin
-	if (ustate == US_IDLE) begin
-		if (uart_in == 0) begin
-			uart_tmc_out <= 1'b0;
-			uart_tmc_out_enable <= 1'b1;
-			uart_out <= 1'b1;
-			ustate <= US_TX;
-		end else begin
-			uart_out <= uart_tmc_in;
-		end
-	end else if (ustate == US_TX) begin
-		if (uart_in == 1) begin
-			uart_tmc_out <= 1'b1;
-			uart_tmc_out_enable <= 1'b1;
-			ustate <= US_PUSH1;
-		end else begin
-			uart_tmc_out <= 1'b0;
-			uart_tmc_out_enable <= 1'b1;
-		end
-	end else if (ustate == US_PUSH1) begin
-		ustate <= US_PUSH2;
-	end else if (ustate == US_PUSH2) begin
-		ustate <= US_PUSH3;
-	end else if (ustate == US_PUSH3) begin
-		ustate <= US_PUSH4;
-	end else if (ustate == US_PUSH4) begin
-		uart_tmc_out <= 1'b1;
-		uart_tmc_out_enable <= 1'b0;
-		ustate <= US_IDLE;
-	end
-end
-assign step1 = fpga3;
-assign step2 = fpga3;
-assign step3 = fpga3;
-assign step4 = fpga3;
-assign step5 = fpga3;
-assign step6 = fpga3;
-assign dir1 = fpga4;
-assign dir2 = fpga4;
-assign dir3 = fpga4;
-assign dir4 = fpga4;
-assign dir5 = fpga4;
-assign dir6 = fpga4;
-
-assign drclk = clock[0];
-//assign drclk = 0;
-assign enn = fpga5;
-
-reg [20:0] pwm_clk = 0;
-reg [7:0] pwm_thr = 0;
-reg pwm_out = 0;
-always @(posedge clk) begin
-	pwm_clk <= pwm_clk + 1;
-	if (pwm_clk[18:11] < pwm_thr)
-		pwm_out <= 1'b0;
-	else
-		pwm_out <= 1'b1;
-	if (pwm_clk[20:0] == 0)
-		pwm_thr <= pwm_thr + 1;
-end
-assign pwm1 = !pwm_out;
-assign pwm2 = pwm_out;
+/*
+ * PWM
+ */
+assign pwm1 = 1'b0;
+assign pwm2 = 1'b0;
 assign pwm3 = 1'b0;
 assign pwm4 = 1'b0;
 assign pwm5 = 1'b0;
-assign pwm6 = 1'b1;
-assign pwm7 = !pwm_out;
-assign pwm8 = pwm_out;
+assign pwm6 = 1'b0;
+assign pwm7 = 1'b0;
+assign pwm8 = 1'b0;
 assign pwm9 = 1'b0;
 assign pwm10 = 1'b0;
 assign pwm11 = 1'b0;
 assign pwm12 = 1'b0;
 
+/*
+ * watchdog
+ */
 assign wden = 1'b0;
-always @(posedge clk) begin
-	if (clock[32] == 0)
-		wdi <= clock[20];
-	else
-		wdi <= 1'b0;
-end
+assign wdi = 1'b0;
+
+/*
+ * LED matrix debugging
+ */
+wire [255:0] ldata;
+led7219 u_led7219(
+	.clk(clk),
+	.data(ldata),
+	.leds_out(exp2_17),
+	.leds_cs(exp2_16),
+	.leds_clk(exp2_15)
+);
 
 assign ldata[255] = exp2_14;
 assign ldata[254] = exp2_13;
@@ -378,32 +417,32 @@ assign ldata[190] =  esp_gpio2;
 assign ldata[189] =  esp_flash;
 assign ldata[188] =  esp_rx;
 
-assign ldata[187] = step1;
+assign ldata[187] = step[1];
 assign ldata[186] = dir1;
 assign ldata[185] = uart1;
 assign ldata[184] = index1;
 assign ldata[183] = diag1;
-assign ldata[182] = step2;
+assign ldata[182] = step[2];
 assign ldata[181] = dir2;
 assign ldata[180] = uart2;
 assign ldata[179] = index2;
 assign ldata[178] = diag2;
-assign ldata[177] = step3;
+assign ldata[177] = step[3];
 assign ldata[176] = dir3;
 assign ldata[175] = uart3;
 assign ldata[174] = index3;
 assign ldata[173] = diag3;
-assign ldata[172] = step4;
+assign ldata[172] = step[4];
 assign ldata[171] = dir4;
 assign ldata[170] = uart4;
 assign ldata[169] = index4;
 assign ldata[168] = diag4;
-assign ldata[167] = step5;
+assign ldata[167] = step[5];
 assign ldata[166] = dir5;
 assign ldata[165] = uart5;
 assign ldata[164] = index5;
 assign ldata[163] = diag5;
-assign ldata[162] = step6;
+assign ldata[162] = step[6];
 assign ldata[161] = dir6;
 assign ldata[160] = uart6;
 assign ldata[159] = index6;
@@ -449,8 +488,10 @@ assign ldata[126:64] = 0;
 
 assign ldata[63:0] = clock;
 
-/* debug */
+/*
+ * direct output for scope debugging
+ */
 assign esp_rx = fpga1;
-assign esp_flash = fpga3;
+assign esp_flash = fpga2;
 
 endmodule
