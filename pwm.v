@@ -24,7 +24,7 @@ module pwm #(
 	output reg invol_req = 0,
 	input wire invol_grant,
 
-	output reg [NPWM-1:0] pwm =0
+	output reg [NPWM-1:0] pwm = 0
 );
 
 /* pwm */
@@ -77,15 +77,14 @@ localparam PS_BITS = $clog2(PS_MAX);
 localparam NPWM_BITS = $clog2(NPWM);
 reg [3:0] state = PS_IDLE;
 reg [NPWM_BITS-1:0] channel = 0;
+/* just keep asserted, we'll read one arg per clock */
+assign arg_advance = 1;
 always @(posedge clk) begin
-	if (arg_advance)
-		arg_advance <= 0;
 	if (cmd_done)
 		cmd_done <= 0;
 	if (state == PS_IDLE && cmd_ready) begin
 		// common to all cmds
 		channel <= arg_data[NPWM_BITS-1:0];
-		arg_advance <= 1;
 		if (cmd == CMD_CONFIG_PWM) begin
 			state <= PS_CONFIG_1;
 		end else if (cmd == CMD_SET_PWM) begin
@@ -94,16 +93,13 @@ always @(posedge clk) begin
 			cmd_done <= 1;
 		end
 	end else if (state == PS_CONFIG_1) begin
-		cycle_ticks[channel] <= arg_data[PWM_BITS-1:0];
-		arg_advance <= 1;
+		cycle_ticks[channel] <= arg_data[PWM_BITS-1:0] - 1;
 		state <= PS_CONFIG_2;
 	end else if (state == PS_CONFIG_2) begin
 		on_ticks[channel] <= arg_data[PWM_BITS-1:0];
-		arg_advance <= 1;
 		state <= PS_CONFIG_3;
 	end else if (state == PS_CONFIG_3) begin
 		default_value[channel] <= arg_data[0];
-		arg_advance <= 1;
 		state <= PS_CONFIG_4;
 	end else if (state == PS_CONFIG_4) begin
 		max_duration[channel] <= arg_data;
@@ -133,7 +129,6 @@ always @(posedge clk) begin
 			scheduled[i] <= 0;
 		end
 	end
-		
 end
 
 endmodule

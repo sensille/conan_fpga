@@ -164,7 +164,7 @@ module conan #(
 
 	input wire fpga1,
 	output wire fpga2,
-	input wire fpga3,
+	output wire fpga3,
 	input wire fpga4,
 	input wire fpga5,
 	input wire fpga6
@@ -202,13 +202,13 @@ wire msg_rd_en;
 /* address width of fifo */
 /* size of receive ring (2^x) */
 localparam RING_BITS = 8;
-localparam CMD_ACKNAK = 8'h7b;
 wire [LEN_BITS-1:0] send_fifo_data;
 wire send_fifo_wr_en;
 wire [7:0] send_ring_data;
 wire send_ring_wr_en;
 wire frame_reset = 1'b0;
 wire frame_error;
+assign fpga3 = frame_error;
 framing #(
 	.BAUD(BAUD),
 	.RING_BITS(RING_BITS),

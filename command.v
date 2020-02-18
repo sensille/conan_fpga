@@ -305,14 +305,20 @@ always @(posedge clk) begin
 	 */
 	if (msg_state == MST_DISPATCH) begin
 		unit_arg_data <= args[0];
-		unit_arg_ptr <= 0;
+		unit_arg_ptr <= 1;
 		nparams <= 0;
 		unit_cmd_ready[unit] <= 1;
 		msg_state <= MST_DISPATCH_WAIT_DONE;
 	end else if (msg_state == MST_DISPATCH_WAIT_DONE) begin
+		unit_cmd_ready[unit] <= 0;
+		unit_invol_grant[unit] <= 0;
 		if (unit_param_write[unit]) begin
 			params[nparams] <= unit_param_data[unit];
 			nparams <= nparams + 1;
+		end
+		if (unit_arg_advance[unit]) begin
+			unit_arg_data <= args[unit_arg_ptr];
+			unit_arg_ptr <= unit_arg_ptr + 1;
 		end
 		if (unit_cmd_done[unit]) begin
 			if (cmd_has_response) begin
@@ -323,8 +329,6 @@ always @(posedge clk) begin
 			end else begin
 				msg_state <= MST_IDLE;
 			end
-			unit_cmd_ready[unit] <= 0;
-			unit_invol_grant[unit] <= 0;
 		end
 	/*
 	 * ---------------------------------
