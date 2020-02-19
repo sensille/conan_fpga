@@ -16,11 +16,23 @@ $(TARGET).json: $(SRC) $(TARGET).lpf Makefile
 #	ecppack --idcode 0x21111043 --svf-rowsize 100000 --svf $(TARGET).svf $< $@
 	ecppack --compress --svf-rowsize 100000 --svf $(TARGET).svf $< $@
 
-verilate:
-	verilator --public -Wall -CFLAGS -g --cc --exe $(TARGET).v verilator.vlt tb.cpp
-	make -j 4 -C obj_dir -f V$(TARGET).mk
-	obj_dir/V$(TARGET)
+verilate: vrun
+v: vrun
 
-v: verilate
+obj_dir/$(TARGET).mk: $(SRC) Makefile
+	verilator --public -Wall -CFLAGS -g --exe --cc $(TARGET).v verilator.vlt tb.cpp
+
+obj_dir/V$(TARGET)__ALL.a: obj_dir/$(TARGET).mk
+	make -j 4 -C obj_dir -f V$(TARGET).mk V$(TARGET)__ALL.a
+
+obj_dir/vsyms.h: obj_dir/$(TARGET).mk
+	./gensyms.pl $(TARGET) obj_dir/V$(TARGET).h obj_dir/vsyms.h
+	touch obj_dir/vsyms.h
+
+obj_dir/V$(TARGET): obj_dir/vsyms.h
+	make -C obj_dir -f V$(TARGET).mk
+
+vrun: obj_dir/V$(TARGET)
+	obj_dir/V$(TARGET)
 
 .PRECIOUS: $(TARGET).json $(TARGET)_out.config

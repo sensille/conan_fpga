@@ -1,7 +1,9 @@
 #include <stdlib.h>
+#include <stddef.h>
 #include <setjmp.h>
 #include "Vconan.h"
 #include "verilated.h"
+#include "vsyms.h"
  
 uint16_t
 crc16_ccitt(uint8_t *buf, uint_fast8_t len)
