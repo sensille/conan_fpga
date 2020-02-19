@@ -487,6 +487,13 @@ init(Vconan *tb)
 }
 
 static void
+yield(sim_t *sp)
+{
+	if (setjmp(sp->test_jb) == 0)
+		longjmp(sp->main_jb, 1);
+}
+
+static void
 step(sim_t *sp, uint64_t cycle)
 {
 	int ret;
@@ -511,18 +518,16 @@ static void
 delay(sim_t *sp, uint64_t ticks)
 {
 	sp->delay_until = sp->cycle + ticks;
-	setjmp(sp->test_jb);
-	if (sp->cycle >= sp->delay_until)
-		return;
-	longjmp(sp->main_jb, 1);
+
+	while (sp->cycle < sp->delay_until)
+		yield(sp);
 }
 
 static void
 wait_for_uart_send(sim_t *sp)
 {
-	setjmp(sp->test_jb);
-	if (!uart_send_done(sp->usp))
-		longjmp(sp->main_jb, 1);
+	while (!uart_send_done(sp->usp))
+		yield(sp);
 }
 
 static void
@@ -530,9 +535,8 @@ wait_for_signal8(sim_t *sp, vluint8_t *signal, vluint8_t val)
 {
 	sp->signal8p = signal; 
 	sp->signal8v = val; 
-	setjmp(sp->test_jb);
-	if (*sp->signal8p != sp->signal8v)
-		longjmp(sp->main_jb, 1);
+	while (*sp->signal8p != sp->signal8v)
+		yield(sp);
 }
 
 static void
@@ -554,22 +558,12 @@ test_version(sim_t *sp)
 	int i;
 	uint64_t curr;
 
-	/* CONFIGURE_PWM, channel,  cycle_ticks, on_ticks, default_value, max_duration */
+	/* send version request */
 	uint32_t cmd[] = { 5, 0, 1000, 100, 0, 5000 };
 	uart_send_vlq(usp, cmd, 6);
-	wait_for_uart_send(sp);
-	delay(sp, 100);
-	wait_for_signal8(sp, &tb->conan__DOT__pwm1, 0);
-	wait_for_signal8(sp, &tb->conan__DOT__pwm1, 1);
-	for (i = 0; i < 3; ++i) {
-		curr = sp->cycle;
-		wait_for_signal8(sp, &tb->conan__DOT__pwm1, 0);
-		if (sp->cycle - curr != 900)
-			fail("pwm 0 signal period mismatch, expected 900, got %d\n", sp->cycle - curr);
-		wait_for_signal8(sp, &tb->conan__DOT__pwm1, 1);
-		if (sp->cycle - curr != 1000)
-			fail("pwm period mismatch, expected 1000, got %d\n", sp->cycle - curr);
-	}
+#if 0
+	wait_for_uart_vlq(sp);
+#endif
 }
 
 static void
@@ -604,8 +598,10 @@ test(sim_t *sp)
 {
 	delay(sp, 1);	/* pass back control after initialization */
 
+#if 0
 	test_version(sp);
 printf("test 1 success\n"); sleep(3);
+#endif
 
 	/* TODO always sync time */
 
@@ -631,7 +627,7 @@ main(int argc, char **argv) {
 		test(sp);	/* initialize test procedure */
 	/*
 	 * hack: this alloc reserves 64k of stack for test().
-	 * it prevents the region where the save frame from test
+	 * it prevents the region where the stack frame from test
 	 * resides from being overwritten
 	 */
 	alloca(65536);
