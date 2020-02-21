@@ -1,10 +1,271 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <setjmp.h>
+#include <pcre.h>
 #include "Vconan.h"
 #include "verilated.h"
 #include "vsyms.h"
+
+#define WF_WATCH	1
+#define WF_PRINT	2
+#define WF_ALL		(WF_WATCH | WF_PRINT)
  
+#define FORM_BIN	1
+#define FORM_HEX	2
+#define FORM_DEC	3
+
+#define COLOR_NONE	1
+#define COLOR_CHANGED	2
+#define COLOR_ALWAYS	3
+
+typedef struct _watch_entry {
+	int		sig;	/* signal number */
+	char		*nick;
+	int		flags;
+	void		*val;
+	uint64_t	*mask;
+	int		format;
+	int		cmp;
+} watch_entry_t;
+
+typedef struct _watch {
+	watch_entry_t	*we;
+	int		n;
+	Vconan		*tb;
+} watch_t;
+
+watch_t *
+watch_init(Vconan *tb)
+{
+	watch_t *wp = (watch_t *)calloc(sizeof(*wp), 1);
+	wp->we = (watch_entry_t *)calloc(sizeof(*wp->we), NSIGS * 10);
+	wp->tb = tb;
+
+	return wp;
+}
+
+static int
+sig_to_len(int sig)
+{
+	int len;
+
+	switch (vsigs[sig].type) {
+	case sigC: len = 1; break;
+	case sigS: len = 2; break;
+	case sigI: len = 4; break;
+	case sigQ: len = 8; break;
+	case sigW: len = 4; break;
+	default:
+		printf("inval sig type\n");
+		exit(1);
+	}
+
+	return len * vsigs[sig].num;
+}
+
+static void *
+watch_get_value(watch_t *wp, int sig)
+{
+	int len = sig_to_len(sig);
+	Vconan *tb = wp->tb;
+	void *v = malloc(len);
+
+	memcpy(v, (uint8_t *)tb + vsigs[sig].offset, len);
+
+	return v;
+}
+
+static int
+watch_cmp_value(int sig, void *v1, void *v2, uint64_t *mask)
+{
+	int len = sig_to_len(sig);
+
+	return memcmp(v1, v2, len);
+}
+
+static int
+find_signal(const char *name, int *start)
+{
+	int i;
+	const char *err_str;
+	int err_off;
+	int ret;
+	pcre *comp = pcre_compile(name, 0, &err_str, &err_off, NULL);
+
+	if (comp == NULL) {
+		printf("name %s not a valid regexp: %s\n", name, err_str);
+		exit(1);
+	}
+
+	for (i = *start; i < NSIGS; ++i) {
+		ret = pcre_exec(comp, NULL, vsigs[i].name,
+			strlen(vsigs[i].name), 0, 0, NULL, 0);
+		if (ret == PCRE_ERROR_NOMATCH)
+			continue;
+		if (ret < 0) {
+			printf("pcre match failed with %d\n", ret);
+			exit(1);
+		}
+		*start = i + 1;
+
+		return i;
+	}
+
+	return -1;
+}
+
+static void
+watch_add(watch_t *wp, const char *name, const char *nick, uint64_t *mask,
+	int format, int flags)
+{
+	int _r = 0;
+	int at_least_one = 0;
+	int sig;
+
+	while ((sig = find_signal(name, &_r)) >= 0) {
+		wp->we[wp->n].sig = sig;
+		wp->we[wp->n].nick = strdup(nick);
+		wp->we[wp->n].flags = flags;
+		wp->we[wp->n].val = watch_get_value(wp, sig);
+		/* TODO: save mask, format */
+		++wp->n;
+		if (wp->n == NSIGS * 10) {
+			printf("too many signals in watchlist\n");
+			exit(1);
+		}
+		at_least_one = 1;
+	}
+	if (!at_least_one) {
+		printf("name %s doesn't match any signal\n", name);
+		exit(0);
+	}
+}
+
+static void
+watch_remove(watch_t *wp, const char *name)
+{
+	int _r = 0;
+	int sig;
+	int i;
+
+	while ((sig = find_signal(name, &_r)) >= 0) {
+		for (i = 0; i < wp->n; ++i) {
+			if (wp->we[i].sig == sig) {
+				free(wp->we[i].nick);
+				free(wp->we[i].val);
+				memmove(wp->we + i, wp->we + i + 1, sizeof(*wp->we) * (wp->n - i));
+				--wp->n;
+				break;
+			}
+		}
+	}
+}
+
+static void
+watch_clear(watch_t *wp)
+{
+	int i;
+
+	for (i = 0; i < wp->n; ++i) {
+		free(wp->we[i].nick);
+		free(wp->we[i].val);
+	}
+	wp->n = 0;
+}
+
+#define C_BLACK "\e[30m"
+#define C_RED "\e[31m"
+#define C_GREEN "\e[32m"
+#define C_YELLOW "\e[33m"
+#define C_BLUE "\e[34m"
+#define C_MAGENTA "\e[35m"
+#define C_CYAN "\e[36m"
+#define C_WHITE "\e[37m"
+#define C_RESET "\e[0m"
+static void
+print_value(watch_entry_t *we, int do_color)
+{
+	int len = sig_to_len(we->sig);
+	const char *c = NULL;
+	char outbuf[1000];
+	uint64_t v;
+
+	if (do_color == COLOR_CHANGED && we->cmp)
+		c = C_RED;
+	else if (do_color == COLOR_ALWAYS)
+		c = C_GREEN;
+	printf(" %s %s", we->nick, c ? c : "");
+
+	printf("%x", *(uint8_t *)we->val);
+
+	if (c)
+		printf("%s", C_RESET);
+}
+
+static void
+do_watch(watch_t *wp, uint64_t cycle)
+{
+	int i;
+	int same = 1;
+	int header_done;
+	void *v;
+
+	/*
+	 * compare signals
+	 */
+	for (i = 0; i < wp->n; ++i) {
+		watch_entry_t *we = wp->we + i;
+		int ret = 0;
+		void *v = NULL;
+
+		v = watch_get_value(wp, we->sig);
+		ret = watch_cmp_value(we->sig, we->val, v, we->mask);
+		if (ret != 0)
+			same = 0;
+		we->cmp = ret;
+		free(we->val);
+		we->val = v;
+	}
+
+	if (same)
+		return;
+
+	/* print all fixed values */
+	header_done = 0;
+	for (i = 0; i < wp->n; ++i) {
+		watch_entry_t *we = wp->we + i;
+		int flags = we->flags;
+
+		if (flags & WF_PRINT) {
+			if (!header_done) {
+				printf("% 10d", cycle);
+				header_done = 1;
+			}
+			print_value(we, COLOR_CHANGED);
+		}
+	}
+	if (header_done)
+		printf("\n");
+
+	header_done = 0;
+	/* print watch-only first */
+	for (i = 0; i < wp->n; ++i) {
+		watch_entry_t *we = wp->we + i;
+		int flags = we->flags;
+
+		if (flags & WF_WATCH && we->cmp && ~flags & WF_PRINT) {
+			if (!header_done) {
+				printf("% 10d changed", cycle);
+				header_done = 1;
+			}
+			print_value(we, COLOR_NONE);
+		}
+	}
+	if (header_done)
+		printf("\n");
+	fflush(stdout);
+}
+
 uint16_t
 crc16_ccitt(uint8_t *buf, uint_fast8_t len)
 {
@@ -242,70 +503,13 @@ printf("received 0x%02x\n", urp->byte);
 }
 
 typedef struct {
-		vluint8_t	fpga1;
-		vluint8_t	fpga2;
-		vluint8_t	uart_rx;
-		vluint8_t	uart_tx;
-		vluint8_t	uart_transmit;
-		vluint8_t	uart_tx_byte;
-		vluint8_t	uart_received;
-		vluint8_t	uart_rx_byte;
-		vluint8_t	uart_is_receiving;
-		vluint8_t	uart_is_transmitting;
-		vluint8_t	uart_rcv_error;
-		vluint8_t	send_fifo_wr_en;
-		vluint8_t	send_fifo_data;
-		vluint8_t	send_fifo_full;
-		vluint8_t	send_fifo_empty;
-		vluint8_t	send_state;
-		vluint8_t	framing_rx_ready;
-		vluint8_t	framing_recv_state;
-		vluint8_t	framing_msg_data;
-		vluint8_t	framing_msg_ready;
-		vluint8_t	framing_msg_rd_en;
-		vluint8_t	command_unit_arg_ptr;
-		vluint32_t	command_unit_arg_data;
-		vluint8_t	command_unit_arg_advance;
-		vluint8_t	command_unit_cmd;
-		vluint8_t	command_unit_cmd_ready;
-		vluint8_t	command_unit_cmd_done;
-		vluint8_t	command_unit_param_write;
-#if 0
-		vluint8_t	command_unit_rsp[6];
-#endif
-		vluint8_t	command_unit_invol_req;
-		vluint8_t	command_unit_invol_grant;
-		vluint8_t	command_msg_state;
-		vluint8_t	pwm1;
-		vluint8_t	pwm2;
-		vluint8_t	pwm3;
-		vluint8_t	pwm4;
-		vluint8_t	pwm5;
-		vluint8_t	pwm6;
-		vluint8_t	pwm7;
-		vluint8_t	pwm8;
-		vluint8_t	pwm9;
-		vluint8_t	pwm10;
-		vluint8_t	pwm11;
-		vluint8_t	pwm12;
-		vluint32_t	pwm_cycle_ticks[12];
-		vluint32_t	pwm_on_ticks[12];
-		vluint32_t	pwm_next_on_ticks[12];
-		vluint32_t	pwm_next_time[12];
-		vluint32_t	pwm_scheduled[12];
-		vluint32_t	pwm_default_value[12];
-		vluint32_t	pwm_max_duration[12];
-		vluint32_t	pwm_duration[12];
-		vluint32_t	pwm_cycle_cnt[12];
-		vluint8_t	pwm_state;
-		vluint8_t	pwm_channel;
 } watchlist_t;
 typedef struct {
 	Vconan		*tb;
 	uart_recv_t	*urp;
 	uart_send_t	*usp;
 	uint64_t	last_change;
-	watchlist_t	w;
+	watch_t		*wp;
 	uint64_t	cycle;
 	jmp_buf		main_jb;
 	jmp_buf		test_jb;
@@ -313,161 +517,6 @@ typedef struct {
 	vluint8_t	signal8v;
 	uint64_t	delay_until;
 } sim_t;
-
-void
-watch(Vconan *tb, sim_t *sp, uint64_t cycle, int want_dump)
-{
-	watchlist_t old_w = sp->w;	/* make copy */
-
-        sp->w.uart_received = tb->conan__DOT__u_framing__DOT__uart_u__DOT__received;
-        sp->w.uart_transmit = tb->conan__DOT__u_framing__DOT__uart_u__DOT__transmit;
-	sp->w.send_fifo_wr_en = tb->conan__DOT__u_framing__DOT__send_fifo_wr_en;
-	sp->w.send_fifo_data = tb->conan__DOT__u_framing__DOT__send_fifo_data;
-	sp->w.send_fifo_full = tb->conan__DOT__u_framing__DOT__send_fifo_full;
-	sp->w.send_fifo_empty = tb->conan__DOT__u_framing__DOT__send_fifo_empty;
-	sp->w.send_state = tb->conan__DOT__u_framing__DOT__send_state;
-	sp->w.framing_rx_ready = tb->conan__DOT__u_framing__DOT__rx_ready;
-	sp->w.framing_recv_state = tb->conan__DOT__u_framing__DOT__recv_state;
-	sp->w.framing_msg_data = tb->conan__DOT__u_framing__DOT__msg_data;
-	sp->w.framing_msg_ready = tb->conan__DOT__u_framing__DOT__msg_ready;
-	sp->w.framing_msg_rd_en = tb->conan__DOT__u_framing__DOT__msg_rd_en;
-	sp->w.command_unit_arg_ptr = tb->conan__DOT__u_command__DOT__unit_arg_ptr;
-	sp->w.command_unit_arg_data = tb->conan__DOT__u_command__DOT__unit_arg_data;
-	sp->w.command_unit_arg_advance = tb->conan__DOT__u_command__DOT__unit_arg_advance;
-	sp->w.command_unit_cmd = tb->conan__DOT__u_command__DOT__unit_cmd;
-	sp->w.command_unit_cmd_ready = tb->conan__DOT__u_command__DOT__unit_cmd_ready;
-	sp->w.command_unit_cmd_done = tb->conan__DOT__u_command__DOT__unit_cmd_done;
-	sp->w.command_unit_param_write = tb->conan__DOT__u_command__DOT__unit_param_write;
-	sp->w.command_msg_state = tb->conan__DOT__u_command__DOT__msg_state;
-	sp->w.pwm1 = tb->conan__DOT__pwm1;
-	sp->w.pwm2 = tb->conan__DOT__pwm2;
-	sp->w.pwm3 = tb->conan__DOT__pwm3;
-	sp->w.pwm4 = tb->conan__DOT__pwm4;
-	sp->w.pwm5 = tb->conan__DOT__pwm5;
-	sp->w.pwm6 = tb->conan__DOT__pwm6;
-	sp->w.pwm7 = tb->conan__DOT__pwm7;
-	sp->w.pwm8 = tb->conan__DOT__pwm8;
-	sp->w.pwm9 = tb->conan__DOT__pwm9;
-	sp->w.pwm10 = tb->conan__DOT__pwm10;
-	sp->w.pwm11 = tb->conan__DOT__pwm11;
-	sp->w.pwm12 = tb->conan__DOT__pwm12;
-	for (int i = 0; i < 12; ++i) {
-		sp->w.pwm_cycle_ticks[i] = tb->conan__DOT__u_command__DOT__u_pwm__DOT__cycle_ticks[i];
-		sp->w.pwm_on_ticks[i] = tb->conan__DOT__u_command__DOT__u_pwm__DOT__on_ticks[i];
-		sp->w.pwm_next_on_ticks[i] = tb->conan__DOT__u_command__DOT__u_pwm__DOT__next_on_ticks[i];
-		sp->w.pwm_next_time[i] = tb->conan__DOT__u_command__DOT__u_pwm__DOT__next_time[i];
-		sp->w.pwm_scheduled[i] = tb->conan__DOT__u_command__DOT__u_pwm__DOT__scheduled[i];
-		sp->w.pwm_default_value[i] = tb->conan__DOT__u_command__DOT__u_pwm__DOT__default_value[i];
-		sp->w.pwm_max_duration[i] = tb->conan__DOT__u_command__DOT__u_pwm__DOT__max_duration[i];
-		sp->w.pwm_duration[i] = tb->conan__DOT__u_command__DOT__u_pwm__DOT__duration[i];
-		sp->w.pwm_cycle_cnt[i] = tb->conan__DOT__u_command__DOT__u_pwm__DOT__cycle_cnt[i];
-	}
-	sp->w.pwm_state = tb->conan__DOT__u_command__DOT__u_pwm__DOT__state;
-	sp->w.pwm_channel = tb->conan__DOT__u_command__DOT__u_pwm__DOT__channel;
-#if 0
-	sp->w.command_unit_rsp = tb->conan__DOT__u_command__DOT__unit_rsp[6];
-#endif
-	sp->w.command_unit_invol_req = tb->conan__DOT__u_command__DOT__unit_invol_req;
-	sp->w.command_unit_invol_grant = tb->conan__DOT__u_command__DOT__unit_invol_grant;
-#if 0
-	sp->w.fpga1 = tb->fpga1;
-	sp->w.fpga2 = tb->fpga2;
-        sp->w.uart_tx_byte = tb->conan__DOT__u_framing__DOT__uart_u__DOT__tx_byte;
-        sp->w.uart_rx_byte = tb->conan__DOT__u_framing__DOT__uart_u__DOT__rx_byte;
-        sp->w.uart_rx = tb->conan__DOT__u_framing__DOT__uart_u__DOT__rx;
-        sp->w.uart_tx = tb->conan__DOT__u_framing__DOT__uart_u__DOT__tx;
-        sp->w.uart_is_receiving = tb->conan__DOT__u_framing__DOT__uart_u__DOT__is_receiving;
-        sp->w.uart_is_transmitting = tb->conan__DOT__u_framing__DOT__uart_u__DOT__is_transmitting;
-        sp->w.uart_rcv_error = tb->conan__DOT__u_framing__DOT__uart_u__DOT__recv_error;
-#endif
-	int cmp = memcmp(&sp->w, &old_w, sizeof(old_w));
-
-	if (cmp || (0 && want_dump)) {
-		/* something has changed */
-		printf("% 10d tx %d rx %d u_rx %d utx %d u_transmit %d u_tx_byte %02x u_rcvd %d u_rx_byte %02x u_is_rx %d u_is_tx %d u_rcv_err %d\n",
-			cycle,
-			tb->fpga1,
-			tb->fpga2,
-			tb->conan__DOT__u_framing__DOT__uart_u__DOT__rx,
-			tb->conan__DOT__u_framing__DOT__uart_u__DOT__tx,
-			tb->conan__DOT__u_framing__DOT__uart_u__DOT__transmit,
-			tb->conan__DOT__u_framing__DOT__uart_u__DOT__tx_byte,
-			tb->conan__DOT__u_framing__DOT__uart_u__DOT__received,
-			tb->conan__DOT__u_framing__DOT__uart_u__DOT__rx_byte,
-			tb->conan__DOT__u_framing__DOT__uart_u__DOT__is_receiving,
-			tb->conan__DOT__u_framing__DOT__uart_u__DOT__is_transmitting,
-			tb->conan__DOT__u_framing__DOT__uart_u__DOT__recv_error);
-		printf("% 10d send_fifo: wr_en %d data %02x full %d empty %d state %d\n", cycle,
-			tb->conan__DOT__u_framing__DOT__send_fifo_wr_en,
-			tb->conan__DOT__u_framing__DOT__send_fifo_data,
-			tb->conan__DOT__u_framing__DOT__send_fifo_full,
-			tb->conan__DOT__u_framing__DOT__send_fifo_empty,
-			tb->conan__DOT__u_framing__DOT__send_state);
-		printf("% 10d framing: frame_error %d rx_ready %d recv_state %d msg_data %02x msg_ready %d msg_rd_en %d\n", cycle,
-			tb->fpga3,
-			tb->conan__DOT__u_framing__DOT__rx_ready,
-			tb->conan__DOT__u_framing__DOT__recv_state,
-			tb->conan__DOT__u_framing__DOT__msg_data,
-			tb->conan__DOT__u_framing__DOT__msg_ready,
-			tb->conan__DOT__u_framing__DOT__msg_rd_en);
-		printf("% 10d command_unit: arg_ptr %d arg_data %d(0x%x) arg_advance 0x%x cmd %d cmd_ready 0x%x cmd_done 0x%x param_write 0x%x invol_req 0x%x invol_grant 0x%x\n", cycle,
-
-			tb->conan__DOT__u_command__DOT__unit_arg_ptr,
-			tb->conan__DOT__u_command__DOT__unit_arg_data,
-			tb->conan__DOT__u_command__DOT__unit_arg_data,
-			tb->conan__DOT__u_command__DOT__unit_arg_advance,
-			tb->conan__DOT__u_command__DOT__unit_cmd,
-			tb->conan__DOT__u_command__DOT__unit_cmd_ready,
-			tb->conan__DOT__u_command__DOT__unit_cmd_done,
-			tb->conan__DOT__u_command__DOT__unit_param_write,
-#if 0
-			tb->conan__DOT__u_command__DOT__unit_rsp[6],
-#endif
-			tb->conan__DOT__u_command__DOT__unit_invol_req,
-			tb->conan__DOT__u_command__DOT__unit_invol_grant);
-		printf("% 10d command state %d args:", cycle,
-			tb->conan__DOT__u_command__DOT__msg_state);
-		for (int i = 0; i < 8; ++i)
-			printf(" %d", tb->conan__DOT__u_command__DOT__args[i]);
-		printf("\n");
-		printf("% 10d pwm %d %d %d %d %d %d %d %d %d %d %d %d channel %d state %d\n", cycle,
-			tb->conan__DOT__pwm1,
-			tb->conan__DOT__pwm2,
-			tb->conan__DOT__pwm3,
-			tb->conan__DOT__pwm4,
-			tb->conan__DOT__pwm5,
-			tb->conan__DOT__pwm6,
-			tb->conan__DOT__pwm7,
-			tb->conan__DOT__pwm8,
-			tb->conan__DOT__pwm9,
-			tb->conan__DOT__pwm10,
-			tb->conan__DOT__pwm11,
-			tb->conan__DOT__pwm12,
-			tb->conan__DOT__u_command__DOT__u_pwm__DOT__channel,
-			tb->conan__DOT__u_command__DOT__u_pwm__DOT__state);
-		for (int i = 0; i < 12; ++i) {
-			printf("% 10d pwm%d cycle_ticks %d on_ticks %d next_on_ticks %d next_time %d scheduled %d default_value %d max_duration %d duration %d cycle_cnt %d\n",
-				cycle, i,
-				tb->conan__DOT__u_command__DOT__u_pwm__DOT__cycle_ticks[i],
-				tb->conan__DOT__u_command__DOT__u_pwm__DOT__on_ticks[i],
-				tb->conan__DOT__u_command__DOT__u_pwm__DOT__next_on_ticks[i],
-				tb->conan__DOT__u_command__DOT__u_pwm__DOT__next_time[i],
-				tb->conan__DOT__u_command__DOT__u_pwm__DOT__scheduled[i],
-				tb->conan__DOT__u_command__DOT__u_pwm__DOT__default_value[i],
-				tb->conan__DOT__u_command__DOT__u_pwm__DOT__max_duration[i],
-				tb->conan__DOT__u_command__DOT__u_pwm__DOT__duration[i],
-				tb->conan__DOT__u_command__DOT__u_pwm__DOT__cycle_cnt[i]);
-		}
-		fflush(stdout);
-		sp->last_change = cycle;
-	}
-
-	if (cycle - sp->last_change > 10000) {
-		printf("% 10d finish due to inactivity\n", cycle);
-		fflush(stdout);
-		exit(0);
-	}
-}
 
 /*
  * main tick loop
@@ -484,6 +533,8 @@ init(Vconan *tb)
 	sp->usp = uart_send_init(&tb->fpga1, d);
 	sp->last_change = 0;
 	sp->cycle = 0;
+
+	sp->wp = watch_init(tb);
 
 	return sp;
 }
@@ -513,7 +564,7 @@ step(sim_t *sp, uint64_t cycle)
 	if (ret == 1)
 		want_dump = 1;
 
-	watch(tb, sp, cycle, want_dump);
+	do_watch(sp->wp, cycle);
 }
 
 static void
@@ -577,6 +628,8 @@ test_pwm(sim_t *sp)
 	int i;
 	uint64_t curr;
 
+	watch_add(sp->wp, "pwm1$", "p1", NULL, FORM_BIN, WF_ALL);
+
 	/* CONFIGURE_PWM, channel,  cycle_ticks, on_ticks, default_value, max_duration */
 	uint32_t cmd[] = { 5, 0, 1000, 100, 0, 5000 };
 	uart_send_vlq(usp, cmd, 6);
@@ -606,10 +659,10 @@ printf("test 1 success\n"); sleep(3);
 #endif
 
 	/* TODO always sync time */
-
 	test_pwm(sp);
 
-	printf("test succeeded\n");
+	printf("test succeeded after %d cycles\n", sp->cycle);
+
 	exit(0);
 }
 

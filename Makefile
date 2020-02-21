@@ -1,4 +1,5 @@
 TARGET = conan
+LDLIBS = -lpcre
 
 all: $(TARGET).bit
 
@@ -30,7 +31,7 @@ obj_dir/vsyms.h: obj_dir/$(TARGET).mk
 	touch obj_dir/vsyms.h
 
 obj_dir/V$(TARGET): obj_dir/vsyms.h
-	make -C obj_dir -f V$(TARGET).mk
+	LDLIBS=$(LDLIBS) make -C obj_dir -f V$(TARGET).mk
 
 vrun: obj_dir/V$(TARGET)
 	obj_dir/V$(TARGET)
