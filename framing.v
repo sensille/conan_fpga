@@ -261,7 +261,6 @@ always @(posedge clk) begin
 		if (send_state == SST_IDLE && !send_fifo_empty) begin
 			send_state <= SST_SOF;
 			send_len <= send_fifo_rd_data + 8'd5;
-			send_seq <= recv_next_seq;
 			send_fifo_rd_en <= 1;
 		end else if (send_state == SST_SOF) begin
 			send_state <= SST_SEQ;
@@ -275,6 +274,7 @@ always @(posedge clk) begin
 			tx_en <= 1;
 			send_crc16_in <= { 4'b001, send_seq };
 			send_crc16_cnt <= 8;
+			send_seq <= send_seq + 1;
 			if (send_len != 5) begin
 				send_state <= SST_DATA;
 			end else begin

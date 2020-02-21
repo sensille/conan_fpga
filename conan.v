@@ -11,7 +11,8 @@ module conan #(
 	parameter NPWM = 12,
 	parameter NSTEPDIR = 6,
 	parameter NENDSTOP = 8,
-	parameter NUART = 6
+	parameter NUART = 6,
+	parameter VERSION = 66
 ) (
 	input wire clk_50mhz,
 	input wire clk_48mhz,
@@ -258,7 +259,8 @@ command #(
 	.NPWM(NPWM),
 	.NSTEPDIR(NSTEPDIR),
 	.NENDSTOP(NENDSTOP),
-	.NUART(NUART)
+	.NUART(NUART),
+	.VERSION(VERSION)
 ) u_command (
 	.clk(clk),
 	.systime(systime),

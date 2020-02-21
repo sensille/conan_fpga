@@ -5,7 +5,7 @@ all: $(TARGET).bit
 
 VINC=/usr/local/share/verilator/include
 
-SRC = led7219.v pll.v uart.v framing.v fifo.v command.v pwm.v $(TARGET).v
+SRC = led7219.v pll.v uart.v framing.v fifo.v command.v pwm.v system.v $(TARGET).v
 
 $(TARGET).json: $(SRC) $(TARGET).lpf Makefile
 	yosys -p "synth_ecp5 -json $(TARGET).json" $(SRC)

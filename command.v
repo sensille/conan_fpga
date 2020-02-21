@@ -11,7 +11,8 @@ module command #(
 	parameter NPWM = 12,
 	parameter NSTEPDIR = 6,
 	parameter NENDSTOP = 8,
-	parameter NUART = 6
+	parameter NUART = 6,
+	parameter VERSION
 ) (
 	input wire clk,
 
@@ -73,7 +74,7 @@ localparam UNIT_ENDSTOP		= 4'd3;
 localparam UNIT_UART		= 4'd4;
 localparam UNIT_STEPDIR		= 4'd5;
 localparam UNIT_SYSTEM		= 4'd6;
-localparam NUNITS		= 4'd6;
+localparam NUNITS		= 4'd7;
 
 localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 1;
 localparam CMD_GET_VERSION	= 0;
@@ -98,6 +99,7 @@ wire [ARGS_BITS-1:0] ARGS_6 = 6;
 wire [ARGS_BITS-1:0] ARGS_7 = 7;
 
 reg [CMDTAB_SIZE-1:0] cmdtab[NCMDS];
+/* { unit, nargs, string_arg, cmd_has_response } */
 initial begin
 	cmdtab[CMD_GET_VERSION] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b1 };
 	cmdtab[CMD_SET_GPIO_OUT] = { UNIT_GPIO_OUT, ARGS_2, 1'b0, 1'b0 };
@@ -142,7 +144,6 @@ reg [NUNITS-1:0] unit_cmd_ready = 0;
 wire [NUNITS-1:0] unit_cmd_done;
 wire [31:0] unit_param_data [NUNITS];
 wire [NUNITS-1:0] unit_param_write;
-wire [CMD_BITS-1:0] unit_rsp [NUNITS-1:0];
 wire [NUNITS-1:0] unit_invol_req;
 reg [NUNITS-1:0] unit_invol_grant = 0;
 pwm #(
@@ -162,12 +163,32 @@ pwm #(
 
 	.param_data(unit_param_data[UNIT_PWM]),
 	.param_write(unit_param_write[UNIT_PWM]),
-	.rsp(unit_rsp[UNIT_PWM]),
 
 	.invol_req(unit_invol_req[UNIT_PWM]),
 	.invol_grant(unit_invol_grant[UNIT_PWM]),
 
 	.pwm(pwm)
+);
+
+system #(
+	.CMD_GET_VERSION(CMD_GET_VERSION),
+	.RSP_GET_VERSION(RSP_GET_VERSION),
+	.VERSION(VERSION)
+) u_system (
+	.clk(clk),
+	.systime(systime),
+
+	.arg_data(unit_arg_data),
+	.arg_advance(unit_arg_advance[UNIT_SYSTEM]),
+	.cmd(unit_cmd),
+	.cmd_ready(unit_cmd_ready[UNIT_SYSTEM]),
+	.cmd_done(unit_cmd_done[UNIT_SYSTEM]),
+
+	.param_data(unit_param_data[UNIT_SYSTEM]),
+	.param_write(unit_param_write[UNIT_SYSTEM]),
+
+	.invol_req(unit_invol_req[UNIT_SYSTEM]),
+	.invol_grant(unit_invol_grant[UNIT_SYSTEM])
 );
 
 assign gpio_out = 0;

@@ -6,6 +6,11 @@
 #include "verilated.h"
 #include "vsyms.h"
 
+#define CMD_GET_VERSION	0
+#define CMD_CONFIG_PWM	5
+
+#define RSP_GET_VERSION	2
+
 #define WF_WATCH	1
 #define WF_PRINT	2
 #define WF_ALL		(WF_WATCH | WF_PRINT)
@@ -123,6 +128,7 @@ watch_add(watch_t *wp, const char *name, const char *nick, uint64_t *mask,
 	int sig;
 
 	while ((sig = find_signal(name, &_r)) >= 0) {
+		printf("watch: adding %s as %s\n", vsigs[sig].name, nick);
 		wp->we[wp->n].sig = sig;
 		wp->we[wp->n].nick = strdup(nick);
 		wp->we[wp->n].flags = flags;
@@ -263,7 +269,6 @@ do_watch(watch_t *wp, uint64_t cycle)
 	}
 	if (header_done)
 		printf("\n");
-	fflush(stdout);
 }
 
 uint16_t
@@ -306,20 +311,35 @@ f4:	*p++ = v & 0x7f;
 #define MAXPACKET	128
 
 // Parse an integer that was encoded as a "variable length quantity"
-static uint32_t
-parse_int(uint8_t **pp)
+static int
+parse_int(const uint8_t *buf, int pos, int len, uint32_t *val)
 {
-	uint8_t *p = *pp, c = *p++;
-	uint32_t v = c & 0x7f;
+	int last = pos + len;
+	uint8_t c;
+	uint32_t v;
+
+	if (pos >= last)
+		goto err;
+
+	c = buf[pos++];
+	v = c & 0x7f;
+
 	if ((c & 0x60) == 0x60)
 		v |= -0x20;
 	while (c & 0x80) {
-		c = *p++;
+		if (pos >= last)
+			goto err;
+		c = buf[pos++];
 		v = (v<<7) | (c & 0x7f);
 	}
-	*pp = p;
 
-	return v;
+	*val = v;
+
+	return pos - (last - len);
+
+err:
+	printf("parse_int failed, buffer too short\n");
+	exit(1);
 }
 
 /*
@@ -444,6 +464,8 @@ typedef struct {
 	uint8_t		byte;		/* current byte */
 	int		pos;		/* pos in buffer */
 	uint8_t		buf[MAXPACKET];
+	/* packet level */
+	int		expected_seq;
 } uart_recv_t;
 
 static uart_recv_t *
@@ -502,8 +524,41 @@ printf("received 0x%02x\n", urp->byte);
 	return urp->bit == 0;
 }
 
-typedef struct {
-} watchlist_t;
+static int
+uart_frame_done(uart_recv_t *urp)
+{
+	int len;
+
+	if (urp->pos < 5)
+		return 0;
+
+	len = urp->buf[0];
+
+	if (urp->pos < len)
+		return 0;
+
+	if (urp->pos > len) {
+		printf("frame longer than header indicates\n");
+		exit(1);
+	}
+	if (urp->buf[len - 1] != 0x7e) {
+		printf("frame not properly terminated\n");
+		exit(1);
+	}
+	uint16_t crc = crc16_ccitt(urp->buf, len - 3);
+	if ((urp->buf[len - 3] != (crc >> 8)) ||
+	    (urp->buf[len - 2] != (crc & 0xff))) {
+		printf("received bad crc\n");
+		exit(1);
+	}
+	if (urp->buf[1] != (0x10 + urp->expected_seq)) {
+		printf("received bad seq\n");
+		exit(1);
+	}
+
+	return 1;
+}
+
 typedef struct {
 	Vconan		*tb;
 	uart_recv_t	*urp;
@@ -565,6 +620,7 @@ step(sim_t *sp, uint64_t cycle)
 		want_dump = 1;
 
 	do_watch(sp->wp, cycle);
+	fflush(stdout);
 }
 
 static void
@@ -581,6 +637,40 @@ wait_for_uart_send(sim_t *sp)
 {
 	while (!uart_send_done(sp->usp))
 		yield(sp);
+}
+
+static void
+wait_for_uart_recv(sim_t *sp)
+{
+	while (!uart_frame_done(sp->urp))
+		yield(sp);
+}
+
+static void
+wait_for_uart_vlq(sim_t *sp, int n, uint32_t *vlq)
+{
+	int ret;
+	int i;
+	int pos = 2;
+	int len;
+
+	wait_for_uart_recv(sp);
+	len = sp->urp->pos - 5;
+	for (i = 0; i < n; ++i) {
+		ret = parse_int(sp->urp->buf, pos, len, vlq + i);
+		pos += ret;
+		len -= ret;
+	}
+	if (len != 0) {
+		printf("parsing recv buffer has leftover\n");
+		exit(1);
+	}
+	/* clear recv buffer */
+	sp->urp->pos = 0;
+	printf("received {");
+	for (i = 0; i < n; ++i)
+		printf(" %d", vlq[i]);
+	printf(" }\n");
 }
 
 static void
@@ -610,13 +700,25 @@ test_version(sim_t *sp)
 	Vconan *tb = sp->tb;
 	int i;
 	uint64_t curr;
+	watch_t *wp = sp->wp;
 
+	watch_add(wp, "u_framing.tx$", "tx", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "u_framing.rx$", "rx", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "u_system.cmd_ready", "rdy", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "u_command.unit$", "unit", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "u_command.msg_state", "cstate", NULL, FORM_BIN, WF_ALL);
+
+	
 	/* send version request */
-	uint32_t cmd[] = { 5, 0, 1000, 100, 0, 5000 };
-	uart_send_vlq(usp, cmd, 6);
-#if 0
-	wait_for_uart_vlq(sp);
-#endif
+	uint32_t cmd[] = { 1, CMD_GET_VERSION };
+	uint32_t rsp[2];
+	uart_send_vlq(usp, cmd, sizeof(cmd) / sizeof(*cmd));
+	wait_for_uart_vlq(sp, 2, rsp);
+
+	if (rsp[0] != 2 || rsp[1] != 0x42) {
+		printf("received incorrect version rsp\n");
+		exit(1);
+	}
 }
 
 static void
@@ -631,8 +733,8 @@ test_pwm(sim_t *sp)
 	watch_add(sp->wp, "pwm1$", "p1", NULL, FORM_BIN, WF_ALL);
 
 	/* CONFIGURE_PWM, channel,  cycle_ticks, on_ticks, default_value, max_duration */
-	uint32_t cmd[] = { 5, 0, 1000, 100, 0, 5000 };
-	uart_send_vlq(usp, cmd, 6);
+	uint32_t cmd[] = { CMD_CONFIG_PWM, 0, 1000, 100, 0, 5000 };
+	uart_send_vlq(usp, cmd, sizeof(cmd) / sizeof(*cmd));
 	wait_for_uart_send(sp);
 	delay(sp, 100);
 	wait_for_signal8(sp, &tb->conan__DOT__pwm1, 0);
@@ -653,10 +755,7 @@ test(sim_t *sp)
 {
 	delay(sp, 1);	/* pass back control after initialization */
 
-#if 0
 	test_version(sp);
-printf("test 1 success\n"); sleep(3);
-#endif
 
 	/* TODO always sync time */
 	test_pwm(sp);

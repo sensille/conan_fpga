@@ -19,7 +19,6 @@ module pwm #(
 
 	output reg [31:0] param_data = 0,
 	output reg param_write = 0,
-	output reg [CMD_BITS-1:0] rsp = 0,
 
 	output reg invol_req = 0,
 	input wire invol_grant,
