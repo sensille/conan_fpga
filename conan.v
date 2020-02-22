@@ -250,6 +250,24 @@ framing #(
 
 wire [63:0] cmd_debug;
 
+/*
+ * on-board LEDs
+ */
+reg [63:0] systime = 0;
+wire [63:0] systime_set;
+wire systime_set_en;
+reg [7:0] leds = 8'b00000001;
+assign { led8, led7, led6, led5, led4, led3, led2, led1 } = leds;
+always @(posedge clk) begin
+	if (systime_set_en)
+		systime <= systime_set;
+	else
+		systime <= systime + 1;
+	if (systime[20:0] == 0) begin
+		leds <= { leds[6:0], leds[7] };
+	end
+end
+
 command #(
 	.LEN_BITS(LEN_BITS),
 	.LEN_FIFO_BITS(LEN_FIFO_BITS),
@@ -292,21 +310,15 @@ command #(
 	.dir({ dir6, dir5, dir4, dir3, dir2, dir1 }),
 	.endstop({ endstop8, endstop7, endstop6, endstop5, endstop4, endstop3, endstop2, endstop1 }),
 	.uart({ uart6, uart5, uart4, uart3, uart2, uart1 }),
+
+	.time_in(systime),
+	.time_out(systime_set),
+	.time_out_en(systime_set_en),
+	.timesync_pulse_in(fpga5),
+	.timesync_latch_in(fpga6),
+
 	.debug(cmd_debug)
 );
-
-/*
- * on-board LEDs
- */
-reg [63:0] systime = 0;
-reg [7:0] leds = 8'b00000001;
-assign { led8, led7, led6, led5, led4, led3, led2, led1 } = leds;
-always @(posedge clk) begin
-	systime <= systime + 1;
-	if (systime[20:0] == 0) begin
-		leds <= { leds[6:0], leds[7] };
-	end
-end
 
 /*
  * Stepper driver

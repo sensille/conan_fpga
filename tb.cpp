@@ -6,10 +6,23 @@
 #include "verilated.h"
 #include "vsyms.h"
 
-#define CMD_GET_VERSION	0
-#define CMD_CONFIG_PWM	5
+#define CMD_GET_VERSION		0
+#define CMD_SYNC_TIME		1
+#define CMD_GET_TIME		2
+#define CMD_SET_GPIO_OUT	3
+#define CMD_SCHEDULE_GPIO_OUT	4
+#define CMD_CONFIG_PWM		5
+#define CMD_SET_PWM		6
+#define CMD_SCHEDULE_PWM	7
+#define CMD_READ_GPIO_IN	8
 
-#define RSP_GET_VERSION	2
+#define RSP_GET_VERSION		0
+#define RSP_GET_TIME		1
+#define RSP_READ_GPIO_IN	1
+#define RSP_POLL_GPIO_IN	2
+#define RSP_ENDSTOP_STATE	3
+#define RSP_STEPPER_POSITION	4
+#define RSP_UART_TRANSFER	5
 
 #define WF_WATCH	1
 #define WF_PRINT	2
@@ -195,6 +208,7 @@ print_value(watch_entry_t *we, int do_color)
 	const char *c = NULL;
 	char outbuf[1000];
 	uint64_t v;
+	int type = vsigs[we->sig].type;
 
 	if (do_color == COLOR_CHANGED && we->cmp)
 		c = C_RED;
@@ -202,7 +216,16 @@ print_value(watch_entry_t *we, int do_color)
 		c = C_GREEN;
 	printf(" %s %s", we->nick, c ? c : "");
 
-	printf("%x", *(uint8_t *)we->val);
+	if (type == sigC)
+		printf("%x", *(uint8_t *)we->val);
+	else if (type == sigS)
+		printf("%x", *(uint16_t *)we->val);
+	else if (type == sigI)
+		printf("%x", *(uint32_t *)we->val);
+	else if (type == sigQ)
+		printf("%lx", *(uint64_t *)we->val);
+	else if (type == sigW)
+		printf("%x", *(uint32_t *)we->val);
 
 	if (c)
 		printf("%s", C_RESET);
@@ -226,7 +249,7 @@ do_watch(watch_t *wp, uint64_t cycle)
 
 		v = watch_get_value(wp, we->sig);
 		ret = watch_cmp_value(we->sig, we->val, v, we->mask);
-		if (ret != 0)
+		if (ret != 0 && (we->flags & WF_WATCH))
 			same = 0;
 		we->cmp = ret;
 		free(we->val);
@@ -590,6 +613,8 @@ init(Vconan *tb)
 	sp->cycle = 0;
 
 	sp->wp = watch_init(tb);
+	tb->fpga5 = 0;
+	tb->fpga6 = 0;
 
 	return sp;
 }
@@ -602,17 +627,29 @@ yield(sim_t *sp)
 }
 
 static void
+timer_tick(sim_t *sp)
+{
+	Vconan *tb = sp->tb;
+
+	if ((sp->cycle % 65536) != 0)
+		return;
+	tb->fpga5 = !tb->fpga5;
+}
+
+static void
 step(sim_t *sp, uint64_t cycle)
 {
 	int ret;
 	Vconan *tb = sp->tb;
 	int want_dump = 0;
 
+	sp->cycle = cycle;
+
 	uart_recv_tick(sp->urp, &want_dump);
-	ret = uart_send_tick(sp->usp, &want_dump);
+	uart_send_tick(sp->usp, &want_dump);
+	timer_tick(sp);
 
 	/* continue test procedure */
-	sp->cycle = cycle;
 	ret = setjmp(sp->main_jb);
 	if (ret == 0)
 		longjmp(sp->test_jb, 1);
@@ -665,8 +702,9 @@ wait_for_uart_vlq(sim_t *sp, int n, uint32_t *vlq)
 		printf("parsing recv buffer has leftover\n");
 		exit(1);
 	}
-	/* clear recv buffer */
+	/* clear recv buffer, bump seq */
 	sp->urp->pos = 0;
+	sp->urp->expected_seq = (sp->urp->expected_seq + 1) & 0x0f;
 	printf("received {");
 	for (i = 0; i < n; ++i)
 		printf(" %d", vlq[i]);
@@ -708,17 +746,76 @@ test_version(sim_t *sp)
 	watch_add(wp, "u_command.unit$", "unit", NULL, FORM_BIN, WF_ALL);
 	watch_add(wp, "u_command.msg_state", "cstate", NULL, FORM_BIN, WF_ALL);
 
-	
 	/* send version request */
-	uint32_t cmd[] = { 1, CMD_GET_VERSION };
+	uint32_t cmd[] = { CMD_GET_VERSION };
 	uint32_t rsp[2];
 	uart_send_vlq(usp, cmd, sizeof(cmd) / sizeof(*cmd));
 	wait_for_uart_vlq(sp, 2, rsp);
 
-	if (rsp[0] != 2 || rsp[1] != 0x42) {
+	if (rsp[0] != 0 || rsp[1] != 0x42) {
 		printf("received incorrect version rsp\n");
 		exit(1);
 	}
+	watch_clear(wp);
+}
+
+static void
+test_time(sim_t *sp)
+{
+	uart_send_t *usp = sp->usp;
+	uart_recv_t *urp = sp->urp;
+	Vconan *tb = sp->tb;
+	int i;
+	uint64_t curr;
+	watch_t *wp = sp->wp;
+
+	watch_add(wp, "u_system.cmd_ready", "rdy", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "u_system.latched_time$", "latch", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "u_system.latched$", "latched", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "u_system.state", "state", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "u_command.msg_state", "cstate", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "^systime$", "time", NULL, FORM_BIN, WF_PRINT);
+	watch_add(wp, "systime_set$", "time_set", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "systime_set_en$", "time_set_en", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "fpga5", "fpga5", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "fpga6", "fpga6", NULL, FORM_BIN, WF_ALL);
+
+	/* send version request */
+	uint32_t cmd[] = { CMD_GET_TIME };
+	uint32_t rsp[3];
+	uart_send_vlq(usp, cmd, sizeof(cmd) / sizeof(*cmd));
+	wait_for_uart_vlq(sp, 3, rsp);
+	if (rsp[0] != 1) {
+		printf("received incorrect version rsp\n");
+		exit(1);
+	}
+	printf("received time %ld\n", rsp[1] + rsp[2] * (1ull << 32));
+
+	/* send a latch signal. wait for a time pulse and set latch 100 cycles after that */
+	uint64_t sync_cycle = ((sp->cycle + 65535) & ~0xffffull);
+	printf("delaying %d to get to sync cycle %d = 0x%x\n",
+		sync_cycle - sp->cycle, sync_cycle, sync_cycle);
+	delay(sp, sync_cycle - sp->cycle + 100);
+
+	tb->fpga6 = 1;
+	delay(sp, 10);
+	tb->fpga6 = 0;
+	delay(sp, 10);
+
+	uint32_t cmd2[] = { CMD_SYNC_TIME, (uint32_t)(sync_cycle & 0xffffffffull),
+		(uint32_t)(sync_cycle >> 32) };
+	uart_send_vlq(usp, cmd2, sizeof(cmd2) / sizeof(*cmd2));
+	wait_for_uart_send(sp);
+
+	delay(sp, 100);
+
+	/* by now, systime and our cycles have to be equal */
+	if (tb->conan__DOT__systime != sp->cycle) {
+		printf("time sync failed: %ld != %ld\n",
+			tb->conan__DOT__systime, sp->cycle);
+		exit(1);
+	}
+	watch_clear(wp);
 }
 
 static void
@@ -755,9 +852,8 @@ test(sim_t *sp)
 {
 	delay(sp, 1);	/* pass back control after initialization */
 
+	test_time(sp);	/* always needed as time sync */
 	test_version(sp);
-
-	/* TODO always sync time */
 	test_pwm(sp);
 
 	printf("test succeeded after %d cycles\n", sp->cycle);
@@ -769,7 +865,7 @@ int
 main(int argc, char **argv) {
 	// Initialize Verilators variables
 	Verilated::commandArgs(argc, argv);
-	uint64_t cycle = 0;
+	uint64_t cycle = 100000;
 	sim_t *sp;
 
 	// Create an instance of our module under test

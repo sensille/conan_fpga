@@ -49,6 +49,12 @@ module command #(
 	input wire [NENDSTOP-1:0] endstop,
 	inout wire [NUART-1:0] uart,
 
+	input wire [63:0] time_in,
+	output wire [63:0] time_out,
+	output wire time_out_en,
+	input wire timesync_pulse_in,
+	input wire timesync_latch_in,
+
 	/*
 	 * debug
 	 */
@@ -78,15 +84,24 @@ localparam NUNITS		= 4'd7;
 
 localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 1;
 localparam CMD_GET_VERSION	= 0;
-localparam CMD_SYNC_CLOCK	= 1;
-localparam CMD_SET_GPIO_OUT	= 2;
-localparam CMD_SCHEDULE_GPIO_OUT= 3;
-localparam CMD_READ_GPIO_IN	= 4;
+localparam CMD_SYNC_TIME	= 1;
+localparam CMD_GET_TIME		= 2;
+localparam CMD_SET_GPIO_OUT	= 3;
+localparam CMD_SCHEDULE_GPIO_OUT= 4;
 localparam CMD_CONFIG_PWM	= 5;
 localparam CMD_SET_PWM		= 6;
 localparam CMD_SCHEDULE_PWM	= 7;
-localparam NCMDS		= 7;
+localparam CMD_READ_GPIO_IN	= 8;
+localparam NCMDS		= 8;
 localparam CMD_BITS = $clog2(NCMDS);
+
+localparam RSP_GET_VERSION	= 0;
+localparam RSP_GET_TIME		= 1;
+localparam RSP_READ_GPIO_IN	= 2;
+localparam RSP_POLL_GPIO_IN	= 3;
+localparam RSP_ENDSTOP_STATE	= 4;
+localparam RSP_STEPPER_POSITION	= 5;
+localparam RSP_UART_TRANSFER	= 6;
 
 /* BAD HACK, should go away soon */
 wire [ARGS_BITS-1:0] ARGS_0 = 0;
@@ -102,13 +117,13 @@ reg [CMDTAB_SIZE-1:0] cmdtab[NCMDS];
 /* { unit, nargs, string_arg, cmd_has_response } */
 initial begin
 	cmdtab[CMD_GET_VERSION] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b1 };
-	cmdtab[CMD_SET_GPIO_OUT] = { UNIT_GPIO_OUT, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_SYNC_TIME] = { UNIT_SYSTEM, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_GET_TIME] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b1 };
 	cmdtab[CMD_CONFIG_PWM] = { UNIT_PWM, ARGS_5, 1'b0, 1'b0 };
+	cmdtab[CMD_SET_GPIO_OUT] = { UNIT_GPIO_OUT, ARGS_2, 1'b0, 1'b0 };
 end
 
 `ifdef notyet
-localparam CMD_GET_VERSION = 0;
-localparam CMD_SYNC_CLOCK = 1;
 localparam CMD_SET_GPIO_OUT = 2;
 localparam CMD_SCHEDULE_GPIO_OUT = 3;
 localparam CMD_READ_GPIO_IN = 4;
@@ -128,13 +143,6 @@ localparam CMD_UART_TRANSFER = 26;
 localparam MAX_CMD = 26;
 localparam CMD_BITS = $clog2(MAX_CMD);
 `endif
-
-localparam RSP_GET_VERSION = 2;
-localparam RSP_READ_GPIO_IN = 7;
-localparam RSP_POLL_GPIO_IN = 9;
-localparam RSP_ENDSTOP_STATE = 17;
-localparam RSP_STEPPER_POSITION = 21;
-localparam RSP_UART_TRANSFER = 27;
 
 reg [ARGS_BITS-1:0] unit_arg_ptr = 0;
 reg [31:0] unit_arg_data = 0;
@@ -173,6 +181,9 @@ pwm #(
 system #(
 	.CMD_GET_VERSION(CMD_GET_VERSION),
 	.RSP_GET_VERSION(RSP_GET_VERSION),
+	.CMD_SYNC_TIME(CMD_SYNC_TIME),
+	.CMD_GET_TIME(CMD_GET_TIME),
+	.RSP_GET_TIME(RSP_GET_TIME),
 	.VERSION(VERSION)
 ) u_system (
 	.clk(clk),
@@ -188,7 +199,14 @@ system #(
 	.param_write(unit_param_write[UNIT_SYSTEM]),
 
 	.invol_req(unit_invol_req[UNIT_SYSTEM]),
-	.invol_grant(unit_invol_grant[UNIT_SYSTEM])
+	.invol_grant(unit_invol_grant[UNIT_SYSTEM]),
+
+
+	.time_in(time_in),
+	.time_out(time_out),
+	.time_out_en(time_out_en),
+	.timesync_pulse_in(timesync_pulse_in),
+	.timesync_latch_in(timesync_latch_in)
 );
 
 assign gpio_out = 0;
