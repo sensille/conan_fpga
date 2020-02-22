@@ -9,20 +9,11 @@
 #define CMD_GET_VERSION		0
 #define CMD_SYNC_TIME		1
 #define CMD_GET_TIME		2
-#define CMD_SET_GPIO_OUT	3
-#define CMD_SCHEDULE_GPIO_OUT	4
-#define CMD_CONFIG_PWM		5
-#define CMD_SET_PWM		6
-#define CMD_SCHEDULE_PWM	7
-#define CMD_READ_GPIO_IN	8
+#define CMD_CONFIG_PWM		3
+#define CMD_SCHEDULE_PWM	4
 
 #define RSP_GET_VERSION		0
 #define RSP_GET_TIME		1
-#define RSP_READ_GPIO_IN	1
-#define RSP_POLL_GPIO_IN	2
-#define RSP_ENDSTOP_STATE	3
-#define RSP_STEPPER_POSITION	4
-#define RSP_UART_TRANSFER	5
 
 #define WF_WATCH	1
 #define WF_PRINT	2
@@ -819,31 +810,65 @@ test_time(sim_t *sp)
 }
 
 static void
+test_pwm_check_cycle(sim_t *sp, int period, int duty)
+{
+	Vconan *tb = sp->tb;
+	int i;
+	uint64_t curr;
+
+	wait_for_signal8(sp, &tb->conan__DOT__pwm1, 0);
+	wait_for_signal8(sp, &tb->conan__DOT__pwm1, 1);
+	for (i = 0; i < 3; ++i) {
+		curr = sp->cycle;
+		wait_for_signal8(sp, &tb->conan__DOT__pwm1, 0);
+		if (sp->cycle - curr != duty)
+			fail("pwm duty period mismatch, expected %d, got %d\n", duty, sp->cycle - curr);
+		wait_for_signal8(sp, &tb->conan__DOT__pwm1, 1);
+		if (sp->cycle - curr != period)
+			fail("pwm period mismatch, expected %d got %d\n", period, sp->cycle - curr);
+	}
+}
+
+static void
 test_pwm(sim_t *sp)
 {
 	uart_send_t *usp = sp->usp;
 	uart_recv_t *urp = sp->urp;
 	Vconan *tb = sp->tb;
 	int i;
-	uint64_t curr;
 
 	watch_add(sp->wp, "pwm1$", "p1", NULL, FORM_BIN, WF_ALL);
 
 	/* CONFIGURE_PWM, channel,  cycle_ticks, on_ticks, default_value, max_duration */
-	uint32_t cmd[] = { CMD_CONFIG_PWM, 0, 1000, 100, 0, 5000 };
+	uint32_t cmd[] = { CMD_CONFIG_PWM, 0, 1000, 1000 - 100, 0, 50000 };
 	uart_send_vlq(usp, cmd, sizeof(cmd) / sizeof(*cmd));
 	wait_for_uart_send(sp);
 	delay(sp, 100);
-	wait_for_signal8(sp, &tb->conan__DOT__pwm1, 0);
-	wait_for_signal8(sp, &tb->conan__DOT__pwm1, 1);
-	for (i = 0; i < 3; ++i) {
-		curr = sp->cycle;
-		wait_for_signal8(sp, &tb->conan__DOT__pwm1, 0);
-		if (sp->cycle - curr != 900)
-			fail("pwm 0 signal period mismatch, expected 900, got %d\n", sp->cycle - curr);
-		wait_for_signal8(sp, &tb->conan__DOT__pwm1, 1);
-		if (sp->cycle - curr != 1000)
-			fail("pwm period mismatch, expected 1000, got %d\n", sp->cycle - curr);
+	test_pwm_check_cycle(sp, 1000, 100);
+
+	/* give it 100000 cycles to process the message */
+	uint32_t sched = sp->cycle + 100000;
+	printf("schedule for %d\n", sched);
+	uint32_t cmd2[] = { CMD_SCHEDULE_PWM, 0, (uint32_t)(sp->cycle + 100000), 1000 - 555 };
+	uart_send_vlq(usp, cmd2, sizeof(cmd2) / sizeof(*cmd2));
+	delay(sp, 50000);
+	/* see that it's not yet scheduled */
+	if (sp->cycle > sched - 5000)
+		fail("waited too long for test");
+	printf("test it's still the old cycle\n");
+	test_pwm_check_cycle(sp, 1000, 100);
+	delay(sp, 50000);
+	if (sp->cycle < sched)
+		fail("waited not long enough");
+	printf("test it's the new cycle\n");
+	test_pwm_check_cycle(sp, 1000, 555);
+
+	/* wait until max duration (+one cycle) is over. pwm should be set to default */
+	delay(sp, 152000 - (sp->cycle - sched));
+	printf("test it's the default of 0\n");
+	for (i = 0; i < 2000; ++i) {
+		if (tb->conan__DOT__pwm1 != 0)
+			fail("pwm failed to fall back to default");
 	}
 }
 

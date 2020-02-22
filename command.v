@@ -86,12 +86,11 @@ localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 1;
 localparam CMD_GET_VERSION	= 0;
 localparam CMD_SYNC_TIME	= 1;
 localparam CMD_GET_TIME		= 2;
-localparam CMD_SET_GPIO_OUT	= 3;
-localparam CMD_SCHEDULE_GPIO_OUT= 4;
-localparam CMD_CONFIG_PWM	= 5;
-localparam CMD_SET_PWM		= 6;
-localparam CMD_SCHEDULE_PWM	= 7;
-localparam CMD_READ_GPIO_IN	= 8;
+localparam CMD_CONFIG_PWM	= 3;
+localparam CMD_SCHEDULE_PWM	= 4;
+localparam CMD_SET_GPIO_OUT	= 5;
+localparam CMD_SCHEDULE_GPIO_OUT= 6;
+localparam CMD_READ_GPIO_IN	= 7;
 localparam NCMDS		= 8;
 localparam CMD_BITS = $clog2(NCMDS);
 
@@ -120,6 +119,7 @@ initial begin
 	cmdtab[CMD_SYNC_TIME] = { UNIT_SYSTEM, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_GET_TIME] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b1 };
 	cmdtab[CMD_CONFIG_PWM] = { UNIT_PWM, ARGS_5, 1'b0, 1'b0 };
+	cmdtab[CMD_SCHEDULE_PWM] = { UNIT_PWM, ARGS_3, 1'b0, 1'b0 };
 	cmdtab[CMD_SET_GPIO_OUT] = { UNIT_GPIO_OUT, ARGS_2, 1'b0, 1'b0 };
 end
 
@@ -157,7 +157,6 @@ reg [NUNITS-1:0] unit_invol_grant = 0;
 pwm #(
 	.NPWM(NPWM),
 	.CMD_CONFIG_PWM(CMD_CONFIG_PWM),
-	.CMD_SET_PWM(CMD_SET_PWM),
 	.CMD_SCHEDULE_PWM(CMD_SCHEDULE_PWM)
 ) u_pwm (
 	.clk(clk),

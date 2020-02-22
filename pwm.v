@@ -5,8 +5,7 @@ module pwm #(
 	parameter NPWM = 12,
 	parameter CMD_BITS = 8,
 	parameter CMD_CONFIG_PWM = 2,
-	parameter CMD_SET_PWM = 3,
-	parameter CMD_SCHEDULE_PWM = 4
+	parameter CMD_SCHEDULE_PWM = 3
 ) (
 	input wire clk,
 	input wire [31:0] systime,
@@ -25,6 +24,11 @@ module pwm #(
 
 	output reg [NPWM-1:0] pwm = 0
 );
+
+/*
+ * NOTE: configure 'on_ticks' has to be set to cycle_ticks - on_ticks, as
+ * cycle_ticks count down. The host has to do the conversion
+ */
 
 /* pwm */
 localparam PWM_BITS = 26;
@@ -70,7 +74,9 @@ localparam PS_CONFIG_1 = 1;
 localparam PS_CONFIG_2 = 2;
 localparam PS_CONFIG_3 = 3;
 localparam PS_CONFIG_4 = 4;
-localparam PS_MAX = 4;
+localparam PS_SCHEDULE_PWM_1 = 5;
+localparam PS_SCHEDULE_PWM_2 = 6;
+localparam PS_MAX = 6;
 
 localparam PS_BITS = $clog2(PS_MAX);
 localparam NPWM_BITS = $clog2(NPWM);
@@ -86,8 +92,8 @@ always @(posedge clk) begin
 		channel <= arg_data[NPWM_BITS-1:0];
 		if (cmd == CMD_CONFIG_PWM) begin
 			state <= PS_CONFIG_1;
-		end else if (cmd == CMD_SET_PWM) begin
 		end else if (cmd == CMD_SCHEDULE_PWM) begin
+			state <= PS_SCHEDULE_PWM_1;
 		end else begin
 			cmd_done <= 1;
 		end
@@ -102,6 +108,14 @@ always @(posedge clk) begin
 		state <= PS_CONFIG_4;
 	end else if (state == PS_CONFIG_4) begin
 		max_duration[channel] <= arg_data;
+		cmd_done <= 1;
+		state <= PS_IDLE;
+	end else if (state == PS_SCHEDULE_PWM_1) begin
+		next_time[channel] <= arg_data;
+		state <= PS_SCHEDULE_PWM_2;
+	end else if (state == PS_SCHEDULE_PWM_2) begin
+		next_on_ticks[channel] <= arg_data;
+		scheduled[channel] <= 1;
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end
