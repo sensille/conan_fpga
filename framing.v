@@ -118,6 +118,7 @@ always @(posedge clk) begin
 				 */
 			end else if (rx_data < 5 || rx_data >= 64) begin
 				/* bad len, go to error state */
+$display("bad len");
 				recv_state <= RST_ERROR;
 			end else begin
 				recv_state <= RST_SEQ;
@@ -154,10 +155,13 @@ always @(posedge clk) begin
 		             rx_data == RECV_EOF_CHAR) begin
 			recv_state <= RST_ERROR;
 			if (crc16 != { recv_crc1, recv_crc2 }) begin
+$display("bad crc");
 				/* bad crc, error */
 			end else if (recv_seq[3:0] != recv_next_seq) begin
+$display("bad seq");
 				/* bad seq, got to error state frame */
 			end else if (recv_seq[7:4] != 4'b0001) begin
+$display("bad seq id");
 				/* invalid upper bits of seq, error */
 			end else begin
 				/*
@@ -170,6 +174,7 @@ always @(posedge clk) begin
 			end
 		end else if (recv_state == RST_EOF) begin
 			/* missing EOF, error */
+$display("no EOF");
 			recv_state <= RST_ERROR;
 			recv_temp_wptr <= recv_wptr;
 		end else if (recv_state == RST_ERROR) begin

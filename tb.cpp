@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <setjmp.h>
+#include <stdarg.h>
 #include <pcre.h>
 #include "Vconan.h"
 #include "verilated.h"
@@ -52,7 +53,51 @@ typedef struct _watch {
 	watch_entry_t	*we;
 	int		n;
 	Vconan		*tb;
+	uint64_t	last_cycle;
 } watch_t;
+
+#define MAXPACKET	128
+
+typedef struct {
+	vluint8_t	*tx;
+	int		divider;
+	int		cnt;		/* clocks per bit */
+	int		bit;		/* current bit */
+	uint8_t		byte;		/* current byte */
+	int		pos;		/* pos in buffer */
+	int		len;		/* buffer len */
+	int		seq;		/* next seq to send */
+	uint8_t		buf[MAXPACKET];
+} uart_send_t;
+
+#define RXBUF	128
+typedef struct {
+	vluint8_t	*rx;
+	int		divider;
+	int		cnt;		/* clocks per bit */
+	int		bit;		/* current bit */
+	uint8_t		byte;		/* current byte */
+	int		pos;		/* pos in buffer */
+	uint8_t		buf[MAXPACKET];
+	/* packet level */
+	int		expected_seq;
+} uart_recv_t;
+
+typedef struct {
+	Vconan		*tb;
+	uart_recv_t	*urp;
+	uart_send_t	*usp;
+	uint64_t	last_change;
+	watch_t		*wp;
+	uint64_t	cycle;
+	jmp_buf		main_jb;
+	jmp_buf		test_jb;
+	vluint8_t	*signal8p;
+	vluint8_t	signal8v;
+	uint64_t	delay_until;
+} sim_t;
+
+static void wait_for_uart_send(sim_t *sp);
 
 watch_t *
 watch_init(Vconan *tb)
@@ -147,6 +192,7 @@ watch_add(watch_t *wp, const char *name, const char *nick, uint64_t *mask,
 		wp->we[wp->n].sig = sig;
 		wp->we[wp->n].nick = strdup(nick);
 		wp->we[wp->n].flags = flags;
+		wp->we[wp->n].format = format;
 		wp->we[wp->n].val = watch_get_value(wp, sig);
 		/* TODO: save mask, format */
 		++wp->n;
@@ -218,16 +264,42 @@ print_value(watch_entry_t *we, int do_color)
 		c = C_GREEN;
 	printf(" %s %s", we->nick, c ? c : "");
 
+	uint64_t val;
 	if (type == sigC)
-		printf("%x", *(uint8_t *)we->val);
+		val = *(uint8_t *)we->val;
 	else if (type == sigS)
-		printf("%x", *(uint16_t *)we->val);
+		val = *(uint16_t *)we->val;
 	else if (type == sigI)
-		printf("%x", *(uint32_t *)we->val);
+		val = *(uint32_t *)we->val;
 	else if (type == sigQ)
-		printf("%lx", *(uint64_t *)we->val);
+		val = *(uint64_t *)we->val;
 	else if (type == sigW)
-		printf("%x", *(uint32_t *)we->val);
+		val = *(uint32_t *)we->val;
+
+	if (we->format == FORM_HEX) {
+		printf("%lx", val);
+	} else if (we->format == FORM_DEC) {
+		printf("%ld", val);
+	} else if (we->format == FORM_BIN) {
+		int first = 0;
+		int i;
+
+		for (i = 63; i >= 0; --i) {
+			int bit = (val & (1ul << 63)) != 0;
+
+			val <<= 1;
+
+			if (bit == 0 && !first)
+				continue;
+			first = 1;
+			printf("%d", bit);
+		}
+		if (!first)
+			printf("0");
+	} else {
+		printf("invalid format %d\n", we->format);
+		exit(1);
+	}
 
 	if (c)
 		printf("%s", C_RESET);
@@ -261,6 +333,8 @@ do_watch(watch_t *wp, uint64_t cycle)
 	if (same)
 		return;
 
+	uint64_t diff = cycle - wp->last_cycle;
+
 	/* print all fixed values */
 	header_done = 0;
 	for (i = 0; i < wp->n; ++i) {
@@ -269,7 +343,7 @@ do_watch(watch_t *wp, uint64_t cycle)
 
 		if (flags & WF_PRINT) {
 			if (!header_done) {
-				printf("% 10d", cycle);
+				printf("% 10d % 6d", cycle, diff);
 				header_done = 1;
 			}
 			print_value(we, COLOR_CHANGED);
@@ -286,7 +360,7 @@ do_watch(watch_t *wp, uint64_t cycle)
 
 		if (flags & WF_WATCH && we->cmp && ~flags & WF_PRINT) {
 			if (!header_done) {
-				printf("% 10d changed", cycle);
+				printf("% 10d % 6d changed", cycle, diff);
 				header_done = 1;
 			}
 			print_value(we, COLOR_NONE);
@@ -294,6 +368,8 @@ do_watch(watch_t *wp, uint64_t cycle)
 	}
 	if (header_done)
 		printf("\n");
+
+	wp->last_cycle = cycle;
 }
 
 uint16_t
@@ -333,8 +409,6 @@ f4:	*p++ = v & 0x7f;
 	return p;
 }
 
-#define MAXPACKET	128
-
 // Parse an integer that was encoded as a "variable length quantity"
 static int
 parse_int(const uint8_t *buf, int pos, int len, uint32_t *val)
@@ -370,18 +444,6 @@ err:
 /*
  * UART send
  */
-typedef struct {
-	vluint8_t	*tx;
-	int		divider;
-	int		cnt;		/* clocks per bit */
-	int		bit;		/* current bit */
-	uint8_t		byte;		/* current byte */
-	int		pos;		/* pos in buffer */
-	int		len;		/* buffer len */
-	int		seq;		/* next seq to send */
-	uint8_t		buf[MAXPACKET];
-} uart_send_t;
-
 static uart_send_t *
 uart_send_init(vluint8_t *tx, int divider)
 {
@@ -414,7 +476,7 @@ uart_send_tick(uart_send_t *usp, int *want_dump)
 	} else {
 		*usp->tx = 1;
 	}
-	if (++usp->bit == 10) {
+	if (++usp->bit == 11) {
 		usp->bit = 0;
 		++usp->pos;
 		--usp->len;
@@ -465,34 +527,42 @@ uart_send_packet(uart_send_t *usp, uint8_t *data, int len)
 }
 
 static void
-uart_send_vlq(uart_send_t *usp, uint32_t *args, int num)
+uart_send_vlq(sim_t *sp, int num, ...)
 {
+	va_list ap;
+	va_start(ap, num);
+
 	uint8_t buf[num * 5];
 	uint8_t *p = buf;
 	int i;
 
 	for (i = 0; i < num; ++i)
-		p = encode_int(p, args[i]);
+		p = encode_int(p, va_arg(ap, uint32_t));
 
-	uart_send_packet(usp, buf, p - buf);
+	uart_send_packet(sp->usp, buf, p - buf);
+}
+
+static void
+uart_send_vlq_and_wait(sim_t *sp, int num, ...)
+{
+	va_list ap;
+	va_start(ap, num);
+
+	uint8_t buf[num * 5];
+	uint8_t *p = buf;
+	int i;
+
+	for (i = 0; i < num; ++i)
+		p = encode_int(p, va_arg(ap, uint32_t));
+
+	uart_send_packet(sp->usp, buf, p - buf);
+
+	wait_for_uart_send(sp);
 }
 
 /*
  * UART receive
  */
-#define RXBUF	128
-typedef struct {
-	vluint8_t	*rx;
-	int		divider;
-	int		cnt;		/* clocks per bit */
-	int		bit;		/* current bit */
-	uint8_t		byte;		/* current byte */
-	int		pos;		/* pos in buffer */
-	uint8_t		buf[MAXPACKET];
-	/* packet level */
-	int		expected_seq;
-} uart_recv_t;
-
 static uart_recv_t *
 uart_recv_init(vluint8_t *rx, int divider)
 {
@@ -583,20 +653,6 @@ uart_frame_done(uart_recv_t *urp)
 
 	return 1;
 }
-
-typedef struct {
-	Vconan		*tb;
-	uart_recv_t	*urp;
-	uart_send_t	*usp;
-	uint64_t	last_change;
-	watch_t		*wp;
-	uint64_t	cycle;
-	jmp_buf		main_jb;
-	jmp_buf		test_jb;
-	vluint8_t	*signal8p;
-	vluint8_t	signal8v;
-	uint64_t	delay_until;
-} sim_t;
 
 /*
  * main tick loop
@@ -746,12 +802,11 @@ test_version(sim_t *sp)
 	watch_add(wp, "u_framing.rx$", "rx", NULL, FORM_BIN, WF_ALL);
 	watch_add(wp, "u_system.cmd_ready", "rdy", NULL, FORM_BIN, WF_ALL);
 	watch_add(wp, "u_command.unit$", "unit", NULL, FORM_BIN, WF_ALL);
-	watch_add(wp, "u_command.msg_state", "cstate", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "u_command.msg_state", "cstate", NULL, FORM_DEC, WF_ALL);
 
 	/* send version request */
-	uint32_t cmd[] = { CMD_GET_VERSION };
 	uint32_t rsp[2];
-	uart_send_vlq(usp, cmd, sizeof(cmd) / sizeof(*cmd));
+	uart_send_vlq(sp, 1, CMD_GET_VERSION);
 	wait_for_uart_vlq(sp, 2, rsp);
 
 	if (rsp[0] != 0 || rsp[1] != 0x42) {
@@ -772,20 +827,19 @@ test_time(sim_t *sp)
 	watch_t *wp = sp->wp;
 
 	watch_add(wp, "u_system.cmd_ready", "rdy", NULL, FORM_BIN, WF_ALL);
-	watch_add(wp, "u_system.latched_time$", "latch", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "u_system.latched_time$", "latch", NULL, FORM_DEC, WF_ALL);
 	watch_add(wp, "u_system.latched$", "latched", NULL, FORM_BIN, WF_ALL);
-	watch_add(wp, "u_system.state", "state", NULL, FORM_BIN, WF_ALL);
-	watch_add(wp, "u_command.msg_state", "cstate", NULL, FORM_BIN, WF_ALL);
-	watch_add(wp, "^systime$", "time", NULL, FORM_BIN, WF_PRINT);
-	watch_add(wp, "systime_set$", "time_set", NULL, FORM_BIN, WF_ALL);
+	watch_add(wp, "u_system.state", "state", NULL, FORM_DEC, WF_ALL);
+	watch_add(wp, "u_command.msg_state", "cstate", NULL, FORM_DEC, WF_ALL);
+	watch_add(wp, "^systime$", "time", NULL, FORM_DEC, WF_PRINT);
+	watch_add(wp, "systime_set$", "time_set", NULL, FORM_DEC, WF_ALL);
 	watch_add(wp, "systime_set_en$", "time_set_en", NULL, FORM_BIN, WF_ALL);
 	watch_add(wp, "fpga5", "fpga5", NULL, FORM_BIN, WF_ALL);
 	watch_add(wp, "fpga6", "fpga6", NULL, FORM_BIN, WF_ALL);
 
 	/* send version request */
-	uint32_t cmd[] = { CMD_GET_TIME };
 	uint32_t rsp[3];
-	uart_send_vlq(usp, cmd, sizeof(cmd) / sizeof(*cmd));
+	uart_send_vlq(sp, 1, CMD_GET_TIME);
 	wait_for_uart_vlq(sp, 3, rsp);
 	if (rsp[0] != 1) {
 		printf("received incorrect version rsp\n");
@@ -804,10 +858,8 @@ test_time(sim_t *sp)
 	tb->fpga6 = 0;
 	delay(sp, 10);
 
-	uint32_t cmd2[] = { CMD_SYNC_TIME, (uint32_t)(sync_cycle & 0xffffffffull),
-		(uint32_t)(sync_cycle >> 32) };
-	uart_send_vlq(usp, cmd2, sizeof(cmd2) / sizeof(*cmd2));
-	wait_for_uart_send(sp);
+	uart_send_vlq_and_wait(sp, 3, CMD_SYNC_TIME, (uint32_t)(sync_cycle & 0xffffffffull),
+		(uint32_t)(sync_cycle >> 32));
 
 	delay(sp, 100);
 
@@ -851,17 +903,14 @@ test_pwm(sim_t *sp)
 	watch_add(sp->wp, "pwm1$", "p1", NULL, FORM_BIN, WF_ALL);
 
 	/* CONFIGURE_PWM, channel,  cycle_ticks, on_ticks, default_value, max_duration */
-	uint32_t cmd[] = { CMD_CONFIG_PWM, 0, 1000, 1000 - 100, 0, 50000 };
-	uart_send_vlq(usp, cmd, sizeof(cmd) / sizeof(*cmd));
-	wait_for_uart_send(sp);
+	uart_send_vlq_and_wait(sp, 6, CMD_CONFIG_PWM, 0, 1000, 1000 - 100, 0, 50000);
 	delay(sp, 100);
 	test_pwm_check_cycle(sp, 1000, 100);
 
 	/* give it 100000 cycles to process the message */
 	uint32_t sched = sp->cycle + 100000;
 	printf("schedule for %d\n", sched);
-	uint32_t cmd2[] = { CMD_SCHEDULE_PWM, 0, (uint32_t)(sp->cycle + 100000), 1000 - 555 };
-	uart_send_vlq(usp, cmd2, sizeof(cmd2) / sizeof(*cmd2));
+	uart_send_vlq(sp, 4, CMD_SCHEDULE_PWM, 0, (uint32_t)(sp->cycle + 100000), 1000 - 555);
 	delay(sp, 50000);
 	/* see that it's not yet scheduled */
 	if (sp->cycle > sched - 5000)
@@ -887,27 +936,35 @@ static void
 test_stepper(sim_t *sp)
 {
 #if 0
-        CMD_CONFIG_STEPPER] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
-in: <channel> <dedge>
-        cmdtab[CMD_QUEUE_STEP] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
-in: <channel> <interval> <count> <add>
-        cmdtab[CMD_SET_NEXT_STEP_DIR] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
-in: <channel> <dir>
-        cmdtab[CMD_RESET_STEP_CLOCK] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
-in: <channel> <time>
-        cmdtab[CMD_STEPPER_GET_POS] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
-in: <channel>
-RSP_STEPPER_GET_POS
-out: <position>
-        cmdtab[CMD_ENDSTOP_SET_STEPPER] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
-in: <endstop-channel> <stepper-channel>
-        cmdtab[CMD_ENDSTOP_QUERY] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
-in: <channel>
-RSP_ENDSTOP_QUERY
-out: <homing> <pin_value>
-        cmdtab[CMD_ENDSTOP_HOME] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
-in: <endstop-channel> <time> <sample_count> <pin_value>
+        CMD_CONFIG_STEPPER in: <channel> <dedge>
+        CMD_QUEUE_STEP in: <channel> <interval> <count> <add>
+        CMD_SET_NEXT_STEP_DIR in: <channel> <dir>
+        CMD_RESET_STEP_CLOCK in: <channel> <time>
+        CMD_STEPPER_GET_POS in: <channel>
+        CMD_ENDSTOP_SET_STEPPER in: <endstop-channel> <stepper-channel>
+        CMD_ENDSTOP_QUERY in: <channel>
+        CMD_ENDSTOP_HOME in: <endstop-channel> <time> <sample_count> <pin_value>
+
+	RSP_STEPPER_GET_POS out: <position>
+	RSP_ENDSTOP_QUERY out: <homing> <pin_value>
 #endif
+	watch_add(sp->wp, "step1", "step", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "dir1", "dir", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "step_start$", "start", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "step_reset", "reset", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "step_start_pending", "pending", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "step_start_time", "time", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_stepper.state", "state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_stepper.cmd_ready", "rdy", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_command.msg_state", "msg_state", NULL, FORM_DEC, WF_ALL);
+
+	uart_send_vlq_and_wait(sp, 3, CMD_CONFIG_STEPPER, 0, 1); /* dedge */
+	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 1000, 10, -10);
+	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 100, 10, 0);
+	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 200, 10, 10);
+	uint32_t start = sp->cycle + 50000;
+	uart_send_vlq_and_wait(sp, 3, CMD_RESET_STEP_CLOCK, 0, start);
+	delay(sp, 100000);
 }
 
 static void

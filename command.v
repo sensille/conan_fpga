@@ -86,10 +86,8 @@ localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 1;
 localparam CMD_GET_VERSION	= 0;
 localparam CMD_SYNC_TIME	= 1;
 localparam CMD_GET_TIME		= 2;
-
 localparam CMD_CONFIG_PWM	= 3;
 localparam CMD_SCHEDULE_PWM	= 4;
-
 localparam CMD_CONFIG_STEPPER	= 5;
 localparam CMD_QUEUE_STEP	= 6;
 localparam CMD_SET_NEXT_STEP_DIR= 7;
@@ -309,7 +307,7 @@ always @(posedge clk) begin
 			curr_arg <= 0;
 			curr_param <= 0;
 			{ unit, nargs, string_arg, cmd_has_response } <= cmdtab[msg_data];
-			if (cmdtab[msg_data][ARGS_BITS:1] == 0)
+			if (cmdtab[msg_data][ARGS_BITS+1:2] == 0)
 				msg_state <= MST_DISPATCH;
 			else
 				msg_state <= MST_PARSE_ARG_START;
