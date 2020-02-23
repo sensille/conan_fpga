@@ -19,7 +19,7 @@ module fifo #(
 	input wire wr_en,
 	output wire full,
 	// read side
-	output reg [DATA_WIDTH - 1 : 0] dout = 0,
+	output reg [DATA_WIDTH - 1 : 0] dout,
 	input wire rd_en,
 	output reg empty = 1,
 

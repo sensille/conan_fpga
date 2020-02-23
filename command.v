@@ -12,7 +12,7 @@ module command #(
 	parameter NSTEPDIR = 6,
 	parameter NENDSTOP = 8,
 	parameter NUART = 6,
-	parameter VERSION
+	parameter VERSION = 0
 ) (
 	input wire clk,
 
@@ -55,6 +55,7 @@ module command #(
 	input wire timesync_pulse_in,
 	input wire timesync_latch_in,
 
+
 	/*
 	 * debug
 	 */
@@ -74,33 +75,38 @@ localparam ARGS_BITS = $clog2(MAX_ARGS);
 
 localparam UNITS_BITS		= 4;
 localparam UNIT_PWM		= 4'd0;
-localparam UNIT_GPIO_OUT	= 4'd1;
-localparam UNIT_GPIO_IN		= 4'd2;
-localparam UNIT_ENDSTOP		= 4'd3;
-localparam UNIT_UART		= 4'd4;
-localparam UNIT_STEPDIR		= 4'd5;
-localparam UNIT_SYSTEM		= 4'd6;
-localparam NUNITS		= 4'd7;
+localparam UNIT_SYSTEM		= 4'd1;
+localparam UNIT_STEPPER		= 4'd2;
+localparam UNIT_UART		= 4'd3;
+localparam UNIT_GPIO_OUT	= 4'd4;
+localparam UNIT_GPIO_IN		= 4'd5;
+localparam NUNITS		= 4'd6;
 
 localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 1;
 localparam CMD_GET_VERSION	= 0;
 localparam CMD_SYNC_TIME	= 1;
 localparam CMD_GET_TIME		= 2;
+
 localparam CMD_CONFIG_PWM	= 3;
 localparam CMD_SCHEDULE_PWM	= 4;
-localparam CMD_SET_GPIO_OUT	= 5;
-localparam CMD_SCHEDULE_GPIO_OUT= 6;
-localparam CMD_READ_GPIO_IN	= 7;
-localparam NCMDS		= 8;
+
+localparam CMD_CONFIG_STEPPER	= 5;
+localparam CMD_QUEUE_STEP	= 6;
+localparam CMD_SET_NEXT_STEP_DIR= 7;
+localparam CMD_RESET_STEP_CLOCK	= 8;
+localparam CMD_STEPPER_GET_POS	= 9;
+localparam CMD_ENDSTOP_SET_STEPPER= 10;
+localparam CMD_ENDSTOP_QUERY	= 11;
+localparam CMD_ENDSTOP_HOME	= 12;
+
+localparam NCMDS		= 13;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
 localparam RSP_GET_TIME		= 1;
-localparam RSP_READ_GPIO_IN	= 2;
-localparam RSP_POLL_GPIO_IN	= 3;
-localparam RSP_ENDSTOP_STATE	= 4;
-localparam RSP_STEPPER_POSITION	= 5;
-localparam RSP_UART_TRANSFER	= 6;
+localparam RSP_STEPPER_GET_POS	= 2;
+localparam RSP_ENDSTOP_STATE	= 3;
+localparam RSP_UART_TRANSFER	= 4;
 
 /* BAD HACK, should go away soon */
 wire [ARGS_BITS-1:0] ARGS_0 = 0;
@@ -120,29 +126,15 @@ initial begin
 	cmdtab[CMD_GET_TIME] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b1 };
 	cmdtab[CMD_CONFIG_PWM] = { UNIT_PWM, ARGS_5, 1'b0, 1'b0 };
 	cmdtab[CMD_SCHEDULE_PWM] = { UNIT_PWM, ARGS_3, 1'b0, 1'b0 };
-	cmdtab[CMD_SET_GPIO_OUT] = { UNIT_GPIO_OUT, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_CONFIG_STEPPER] = { UNIT_STEPPER, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_QUEUE_STEP] = { UNIT_STEPPER, ARGS_4, 1'b0, 1'b0 };
+	cmdtab[CMD_SET_NEXT_STEP_DIR] = { UNIT_STEPPER, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_RESET_STEP_CLOCK] = { UNIT_STEPPER, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_STEPPER_GET_POS] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b0 };
+	cmdtab[CMD_ENDSTOP_SET_STEPPER] = { UNIT_STEPPER, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_ENDSTOP_QUERY] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b0 };
+	cmdtab[CMD_ENDSTOP_HOME] = { UNIT_STEPPER, ARGS_4, 1'b0, 1'b0 };
 end
-
-`ifdef notyet
-localparam CMD_SET_GPIO_OUT = 2;
-localparam CMD_SCHEDULE_GPIO_OUT = 3;
-localparam CMD_READ_GPIO_IN = 4;
-localparam CMD_POLL_GPIO_IN = 5;
-localparam CMD_CONFIG_STEPPER = 13;
-localparam CMD_CONFIG_ENDSTOP = 14;
-localparam CMD_ENDSTOP_HOME = 15;
-localparam CMD_ENDSTOP_QUERY_STATE = 16;
-localparam CMD_ENDSTOP_SET_STEPPER = 18;
-localparam CMD_QUEUE_STEP = 19;
-localparam CMD_STEPPER_GET_POSITION = 20;
-localparam CMD_SET_NEXT_STEP_DIR = 22;
-localparam CMD_RESET_STEP_CLOCK = 23;
-localparam CMD_CONFIG_UART = 24;
-localparam CMD_UART_SEND = 25;
-localparam CMD_UART_TRANSFER = 26;
-localparam MAX_CMD = 26;
-localparam CMD_BITS = $clog2(MAX_CMD);
-`endif
 
 reg [ARGS_BITS-1:0] unit_arg_ptr = 0;
 reg [31:0] unit_arg_data = 0;
@@ -206,6 +198,40 @@ system #(
 	.time_out_en(time_out_en),
 	.timesync_pulse_in(timesync_pulse_in),
 	.timesync_latch_in(timesync_latch_in)
+);
+
+stepper #(
+	.NSTEPDIR(NSTEPDIR),
+	.NENDSTOP(NENDSTOP),
+	.CMD_CONFIG_STEPPER(CMD_CONFIG_STEPPER),
+	.CMD_QUEUE_STEP(CMD_QUEUE_STEP),
+	.CMD_SET_NEXT_STEP_DIR(CMD_SET_NEXT_STEP_DIR),
+	.CMD_RESET_STEP_CLOCK(CMD_RESET_STEP_CLOCK),
+	.CMD_STEPPER_GET_POS(CMD_STEPPER_GET_POS),
+	.CMD_ENDSTOP_SET_STEPPER(CMD_ENDSTOP_SET_STEPPER),
+	.CMD_ENDSTOP_QUERY(CMD_ENDSTOP_QUERY),
+	.CMD_ENDSTOP_HOME(CMD_ENDSTOP_HOME),
+	.RSP_STEPPER_GET_POS(RSP_STEPPER_GET_POS),
+	.RSP_ENDSTOP_STATE(RSP_ENDSTOP_STATE)
+) u_stepper (
+	.clk(clk),
+	.systime(systime),
+
+	.arg_data(unit_arg_data),
+	.arg_advance(unit_arg_advance[UNIT_STEPPER]),
+	.cmd(unit_cmd),
+	.cmd_ready(unit_cmd_ready[UNIT_STEPPER]),
+	.cmd_done(unit_cmd_done[UNIT_STEPPER]),
+
+	.param_data(unit_param_data[UNIT_STEPPER]),
+	.param_write(unit_param_write[UNIT_STEPPER]),
+
+	.invol_req(unit_invol_req[UNIT_STEPPER]),
+	.invol_grant(unit_invol_grant[UNIT_STEPPER]),
+
+	.step(step),
+	.dir(dir),
+	.endstop(endstop)
 );
 
 assign gpio_out = 0;

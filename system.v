@@ -3,11 +3,11 @@
 
 module system #(
 	parameter CMD_BITS = 8,
-	parameter CMD_GET_VERSION,
-	parameter RSP_GET_VERSION,
-	parameter CMD_SYNC_TIME,
-	parameter CMD_GET_TIME,
-	parameter RSP_GET_TIME,
+	parameter CMD_GET_VERSION = 0,
+	parameter RSP_GET_VERSION = 0,
+	parameter CMD_SYNC_TIME = 0,
+	parameter CMD_GET_TIME = 0,
+	parameter RSP_GET_TIME = 0,
 	parameter VERSION = 1
 ) (
 	input wire clk,

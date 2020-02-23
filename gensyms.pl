@@ -26,15 +26,18 @@ while (<$src>) {
 	next if (/^\s*\/\//);
 	next if (/^\s*};/);
 	next if (/^\s*struct \{/);
-	if (!/^\s+([CIQSW])Data\/\*(\d+):(\d+)\*\/ (\w+)(\[\d+\])?;$/) {
+	if (!/^\s+([CIQSW])Data\/\*(\d+):(\d+)\*\/ (\w+)(\[\d+\])?(\[\d+\])?;$/) {
 		die "failed to parse $_";
 	}
 	my $type = $1;
 	my $range_start = $2;
 	my $range_end = $3;
 	my $name_raw = $4;
-	my $num = $5 // 1;
-	$num =~ s/[\[\]]//g;
+	my $num1 = $5 // 1;
+	my $num2 = $6 // 1;
+	$num1 =~ s/[\[\]]//g;
+	$num2 =~ s/[\[\]]//g;
+	my $num = $num1 * $num2;
 	my $name_cooked = $name_raw;
 	$name_cooked =~ s/__DOT__/./g;
 	# first component is always the same, strip for convenience

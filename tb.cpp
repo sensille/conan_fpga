@@ -11,9 +11,20 @@
 #define CMD_GET_TIME		2
 #define CMD_CONFIG_PWM		3
 #define CMD_SCHEDULE_PWM	4
+#define CMD_CONFIG_STEPPER	5
+#define CMD_QUEUE_STEP		6
+#define CMD_SET_NEXT_STEP_DIR	7
+#define CMD_RESET_STEP_CLOCK	8
+#define CMD_STEPPER_GET_POS	9
+#define CMD_ENDSTOP_SET_STEPPER	10
+#define CMD_ENDSTOP_QUERY	11
+#define CMD_ENDSTOP_HOME	12
 
 #define RSP_GET_VERSION		0
 #define RSP_GET_TIME		1
+#define RSP_STEPPER_GET_POS	2
+#define RSP_ENDSTOP_STATE	3
+#define RSP_UART_TRANSFER	4
 
 #define WF_WATCH	1
 #define WF_PRINT	2
@@ -873,13 +884,43 @@ test_pwm(sim_t *sp)
 }
 
 static void
+test_stepper(sim_t *sp)
+{
+#if 0
+        CMD_CONFIG_STEPPER] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
+in: <channel> <dedge>
+        cmdtab[CMD_QUEUE_STEP] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
+in: <channel> <interval> <count> <add>
+        cmdtab[CMD_SET_NEXT_STEP_DIR] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
+in: <channel> <dir>
+        cmdtab[CMD_RESET_STEP_CLOCK] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
+in: <channel> <time>
+        cmdtab[CMD_STEPPER_GET_POS] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
+in: <channel>
+RSP_STEPPER_GET_POS
+out: <position>
+        cmdtab[CMD_ENDSTOP_SET_STEPPER] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
+in: <endstop-channel> <stepper-channel>
+        cmdtab[CMD_ENDSTOP_QUERY] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
+in: <channel>
+RSP_ENDSTOP_QUERY
+out: <homing> <pin_value>
+        cmdtab[CMD_ENDSTOP_HOME] = { UNIT_STEPPER, ARGS_, 1'b0, 1'b0 };
+in: <endstop-channel> <time> <sample_count> <pin_value>
+#endif
+}
+
+static void
 test(sim_t *sp)
 {
 	delay(sp, 1);	/* pass back control after initialization */
 
 	test_time(sp);	/* always needed as time sync */
+#if 0
 	test_version(sp);
 	test_pwm(sp);
+#endif
+	test_stepper(sp);
 
 	printf("test succeeded after %d cycles\n", sp->cycle);
 
