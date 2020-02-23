@@ -64,57 +64,60 @@ reg [STEP_COUNT_BITS-1:0] count = 0;
 reg [STEP_ADD_BITS-1:0] add = 0;
 wire [STEP_INTERVAL_BITS-1:0] signed_add = { {(STEP_INTERVAL_BITS - STEP_ADD_BITS) { add[STEP_ADD_BITS-1] }}, add };
 
-reg do_step = 0;
 reg step_delay = 0;
 
 always @(posedge clk) begin
 	if (queue_rd_en)
 		queue_rd_en <= 0;
-	do_step <= 0;
 
-	if (count == 0 && (running | start) && !queue_empty) begin
-		running <= 1;
-		count <= q_count;
-		add <= q_add;
-		interval <= q_interval;
-		curr_interval <= q_interval - 2;
-		dir <= q_dir;
-		queue_rd_en <= 1;
-	end else if (count == 0 && (running | start) && queue_empty) begin
-		running <= 0;
-	end
-
-	if (count != 0) begin
+	if (count == 0) begin
+		if (start && !queue_empty) begin
+			running <= 1;
+			count <= q_count;
+			add <= q_add;
+			interval <= q_interval;
+			curr_interval <= q_interval - 1;
+			dir <= q_dir;
+			queue_rd_en <= 1;
+		end
+	end else begin
 		if (curr_interval != 0) begin
 			curr_interval <= curr_interval - 1;
 		end else begin
 			count <= count - 1;
-			interval <= interval + signed_add;
-			curr_interval <= interval + signed_add - 1;
-			do_step <= 1;
+			if (count != 1) begin
+				interval <= interval + signed_add;
+				curr_interval <= interval + signed_add - 1;
+			end else if (!queue_empty) begin
+				count <= q_count;
+				add <= q_add;
+				interval <= q_interval;
+				curr_interval <= q_interval - 1;
+				dir <= q_dir;
+				queue_rd_en <= 1;
+			end else begin
+				running <= 0;
+			end
+			if (dedge) begin
+				step <= !step;
+			end else begin
+				step <= 1;
+				step_delay <= 1;
+			end
+			if (dir)
+				position <= position + 1;
+			else
+				position <= position - 1;
 		end
 	end
 
-	if (do_step) begin
-		if (dedge) begin
-			step <= !step;
-		end else begin
-			step <= 1;
-			step_delay <= 1;
-		end
-		if (dir)
-			position <= position + 1;
-		else
-			position <= position - 1;
-	end else if (step_delay) begin
+	if (step_delay) begin
 		step_delay <= 0;
 	end else if (!dedge && step) begin
 		step <= 0;
 	end
 
 	if (reset) begin
-		do_step <= 0;
-		step <= 0;
 		running <= 0;
 		count <= 0;
 	end

@@ -49,7 +49,7 @@ localparam PS_SYNC_TIME_1 = 2;
 localparam PS_GET_TIME_1  = 3;
 localparam PS_GET_TIME_2  = 4;
 localparam PS_MAX = 4;
-localparam PS_BITS = $clog2(PS_MAX);
+localparam PS_BITS = $clog2(PS_MAX + 1);
 
 reg [63:0] latched_time = 0;
 reg latched = 0;

@@ -118,6 +118,7 @@ reg [23:0] endstop_sample_count[NENDSTOP-1:0];
 reg [15:0] endstop_tick_cnt[NENDSTOP-1:0];
 reg [5:0] endstop_sample_cnt[NENDSTOP-1:0];
 reg endstop_pin_value[NENDSTOP];
+reg [NSTEPDIR-1:0] endstop_step_reset[NENDSTOP-1:0];
 reg [NENDSTOP-1:0] endstop_send_state = 0;
 localparam ES_IDLE = 0;
 localparam ES_WAIT_FOR_CLOCK = 1;
@@ -129,6 +130,16 @@ initial begin: init_endstop1
 
 	for (i = 0; i < NENDSTOP; i = i + 1) begin
 		endstop_stepper[i] = 0;
+		endstop_step_reset[i] = 0;
+	end
+end
+always @(*) begin: init_endstop2
+	integer i;
+	step_reset = 0;
+	for (i = 0; i < NENDSTOP; i = i + 1) begin
+		if (endstop_step_reset[i]) begin
+			step_reset = step_reset | endstop_stepper[i];
+		end
 	end
 end
 
@@ -160,10 +171,10 @@ localparam PS_ENDSTOP_HOME_3		= 15;
 localparam PS_WAIT_GRANT		= 16;
 localparam PS_MAX			= 16;
 
-localparam PS_BITS = $clog2(PS_MAX);
+localparam PS_BITS = $clog2(PS_MAX + 1);
 localparam NENDSTOP_BITS = $clog2(NENDSTOP);
 localparam NSTEPDIR_BITS = $clog2(NSTEPDIR);
-reg [3:0] state = PS_IDLE;
+reg [PS_BITS-1:0] state = PS_IDLE;
 reg temp_reg = 0;
 /* just keep asserted, we'll read one arg per clock */
 assign arg_advance = 1;
@@ -217,7 +228,8 @@ always @(posedge clk) begin: main
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_RESET_STEP_CLOCK_1) begin
-		step_start_time[channel] <= arg_data;
+		/* the start time has 2 cycles delay. subtract them here, so we're spot on */
+		step_start_time[channel] <= arg_data - 2;
 		step_start_pending[channel] <= 1;
 		cmd_done <= 1;
 		state <= PS_IDLE;
@@ -232,7 +244,7 @@ always @(posedge clk) begin: main
 		state <= PS_IDLE;
 	end else if (state == PS_ENDSTOP_SET_STEPPER_1) begin
 		/* <endstop-channel> <stepper-channel> */
-		endstop_stepper[arg_data[NSTEPDIR_BITS-1:0]][channel] <= 1;
+		endstop_stepper[channel][arg_data[NSTEPDIR_BITS-1:0]] <= 1;
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_ENDSTOP_QUERY_1) begin
@@ -257,10 +269,11 @@ always @(posedge clk) begin: main
 		temp_reg <= arg_data == 0;
 	end else if (state == PS_ENDSTOP_HOME_3) begin
 		endstop_pin_value[channel] <= arg_data;
-		if (temp_reg)
+		if (temp_reg) begin
 			endstop_homing[channel] <= 0;	/* sample_count 0, cancel homing */
-		else
+		end else begin
 			endstop_homing[channel] <= 1;
+		end
 		endstop_state[channel] <= ES_WAIT_FOR_CLOCK;
 		cmd_done <= 1;
 		state <= PS_IDLE;
@@ -268,15 +281,13 @@ always @(posedge clk) begin: main
 	end else if (state == PS_IDLE && endstop_send_state) begin
 		invol_req <= 1;
 		state <= PS_WAIT_GRANT;
-	end else if (state == PS_WAIT_GRANT) begin
+	end else if (state == PS_WAIT_GRANT && invol_grant) begin
 		invol_req <= 0;
-		state <= PS_WAIT_GRANT;
 		for (i = 0; i < NENDSTOP; i = i + 1) begin
 			if (endstop_send_state[i]) begin
 				endstop_send_state[i] <= 0;
 				channel <= i;
 				state <= PS_ENDSTOP_QUERY_1;
-				break;
 			end
 		end
 	end
@@ -294,8 +305,8 @@ always @(posedge clk) begin: main
 	/*
 	 * endstop homing engine
 	 */
-	step_reset <= 0;
 	for (i = 0; i < NENDSTOP; i = i + 1) begin
+		endstop_step_reset[i] <= 0;
 		if (endstop_homing[i]) begin
 			if (endstop_state[i] == ES_WAIT_FOR_CLOCK) begin
 				if (endstop_time[i] == systime) begin
@@ -314,7 +325,7 @@ always @(posedge clk) begin: main
 						/* endstop triggered */
 						endstop_homing[i] <= 0;
 						/* reset stepper */
-						step_reset <= step_reset | endstop_stepper[i];
+						endstop_step_reset[i] <= 1;
 						/* send endstop_state */
 						endstop_send_state[i] <= 1;
 					end else begin

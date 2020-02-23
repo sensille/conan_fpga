@@ -78,7 +78,7 @@ localparam PS_SCHEDULE_PWM_1 = 5;
 localparam PS_SCHEDULE_PWM_2 = 6;
 localparam PS_MAX = 6;
 
-localparam PS_BITS = $clog2(PS_MAX);
+localparam PS_BITS = $clog2(PS_MAX + 1);
 localparam NPWM_BITS = $clog2(NPWM);
 reg [3:0] state = PS_IDLE;
 reg [NPWM_BITS-1:0] channel = 0;

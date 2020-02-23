@@ -40,9 +40,10 @@ while (<$src>) {
 	my $num = $num1 * $num2;
 	my $name_cooked = $name_raw;
 	$name_cooked =~ s/__DOT__/./g;
+	$name_cooked =~ s/__BRA__(\d+)__KET__/[$1]/g;
 	# first component is always the same, strip for convenience
 	$name_cooked =~ s/^$model\.//;
-	my $type = "sig" . $type;
+	$type = "sig" . $type;
 
 	push @signals, {
 		type => $type,

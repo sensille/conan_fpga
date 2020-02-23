@@ -128,9 +128,9 @@ initial begin
 	cmdtab[CMD_QUEUE_STEP] = { UNIT_STEPPER, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_SET_NEXT_STEP_DIR] = { UNIT_STEPPER, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_RESET_STEP_CLOCK] = { UNIT_STEPPER, ARGS_2, 1'b0, 1'b0 };
-	cmdtab[CMD_STEPPER_GET_POS] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b0 };
+	cmdtab[CMD_STEPPER_GET_POS] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b1 };
 	cmdtab[CMD_ENDSTOP_SET_STEPPER] = { UNIT_STEPPER, ARGS_2, 1'b0, 1'b0 };
-	cmdtab[CMD_ENDSTOP_QUERY] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b0 };
+	cmdtab[CMD_ENDSTOP_QUERY] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b1 };
 	cmdtab[CMD_ENDSTOP_HOME] = { UNIT_STEPPER, ARGS_4, 1'b0, 1'b0 };
 end
 
@@ -248,7 +248,7 @@ localparam MST_PARAM = 7;
 localparam MST_PARAM_SKIP = 8;
 localparam MST_PARAM_SEND = 9;
 localparam MST_MAX = 9;
-localparam MST_BITS = $clog2(MST_MAX);
+localparam MST_BITS = $clog2(MST_MAX + 1);
 
 reg [MST_BITS-1:0] msg_state = 0;
 reg [CMD_BITS-1:0] msg_cmd = 0;
@@ -305,7 +305,6 @@ always @(posedge clk) begin
 		if (msg_state == MST_IDLE) begin
 			msg_cmd <= msg_data;
 			curr_arg <= 0;
-			curr_param <= 0;
 			{ unit, nargs, string_arg, cmd_has_response } <= cmdtab[msg_data];
 			if (cmdtab[msg_data][ARGS_BITS+1:2] == 0)
 				msg_state <= MST_DISPATCH;
@@ -368,6 +367,7 @@ always @(posedge clk) begin
 	if (msg_state == MST_DISPATCH) begin
 		unit_arg_data <= args[0];
 		unit_arg_ptr <= 1;
+		curr_param <= 0;
 		nparams <= 0;
 		unit_cmd_ready[unit] <= 1;
 		msg_state <= MST_DISPATCH_WAIT_DONE;
@@ -454,6 +454,8 @@ always @(posedge clk) begin
 			if (unit_invol_req[i]) begin
 				unit <= i;
 				nparams <= 0;
+				curr_param <= 0;
+				cmd_has_response <= 1;
 				unit_invol_grant[unit] <= 1;
 				msg_state <= MST_DISPATCH_WAIT_DONE;
 			end
