@@ -185,11 +185,19 @@ always @(posedge clk)
 	_drclk <= !_drclk;
 assign drclk = _drclk;
 `else
+`ifdef yosys
 pll u_pll(
 	.clkin(clk_48mhz),
 	.clkout0(clk),		// 24 MHz
 	.clkout1(drclk)		// 12 MHz
 );
+`else
+assign clk = clk_48mhz;
+reg [1:0] _drclk = 0;
+always @(posedge clk)
+	_drclk <= _drclk + 1;
+assign drclk = _drclk[1];
+`endif
 `endif
 
 /*

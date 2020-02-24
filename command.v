@@ -233,8 +233,6 @@ stepper #(
 );
 
 assign gpio_out = 0;
-assign step = 0;
-assign dir = 0;
 assign uart = 0;
 
 localparam MST_IDLE = 0;

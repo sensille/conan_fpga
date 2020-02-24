@@ -2,7 +2,7 @@
 `default_nettype none
 
 module stepdir #(
-	parameter MOVE_TYPE_KLIPPER = 3'b00,
+	parameter MOVE_TYPE_KLIPPER = 3'b000,
 	parameter MOVE_TYPE_BITS = 3,
 	parameter STEP_INTERVAL_BITS = 22,
 	parameter STEP_COUNT_BITS = 26,
@@ -48,7 +48,10 @@ fifo #(
 
 /*
  * queue is 72 bits wide:
- * <move type:3> <dir:1> <interval:22> <count:26> <add:20>
+ * <dir:1> <interval:22> <count:26> <add:20> <move type:3>
+ *
+ * move type has to be last, otherwise yosys won't infer block ram.
+ * This has to do with the fact that we don't use the move_type yet.
  */
 /* for convenient access */
 wire [MOVE_TYPE_BITS-1:0] q_move_type;
@@ -56,7 +59,7 @@ wire [STEP_INTERVAL_BITS-1:0] q_interval;
 wire q_dir;
 wire [STEP_COUNT_BITS-1:0] q_count;
 wire [STEP_ADD_BITS-1:0] q_add;
-assign { q_move_type, q_dir, q_interval, q_count, q_add } = queue_rd_data;
+assign { q_dir, q_interval, q_count, q_add, q_move_type } = queue_rd_data;
 
 reg [STEP_INTERVAL_BITS-1:0] interval = 0;
 reg [STEP_INTERVAL_BITS-1:0] curr_interval = 0;
@@ -72,6 +75,10 @@ always @(posedge clk) begin
 
 	if (count == 0) begin
 		if (start && !queue_empty) begin
+			/*
+			 * currently this condition is only here to make use of all bits
+			 * of the fifo. Otherwise yosys won't infer a block ram for it
+			 */
 			running <= 1;
 			count <= q_count;
 			add <= q_add;

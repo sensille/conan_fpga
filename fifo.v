@@ -10,7 +10,7 @@
  */
 module fifo #(
 	parameter DATA_WIDTH = 72,
-	parameter ADDR_WIDTH = 6
+	parameter ADDR_WIDTH = 9
 ) (
 	input wire clk,
 	input wire clr,

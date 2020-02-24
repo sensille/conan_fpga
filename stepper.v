@@ -62,7 +62,7 @@ in: <endstop-channel> <time> <sample_count> <pin_value>
 
 /*
  * queue is 72 bits wide:
- * <move type:3> <dir:1> <interval:22> <count:26> <add:20>
+ * <dir:1> <interval:22> <count:26> <add:20> <move type:3>
  */
 localparam MOVE_TYPE_KLIPPER = 3'b000;
 localparam MOVE_TYPE_BITS = 3;
@@ -150,7 +150,7 @@ reg [CHANNEL_BITS-1:0] channel = 0;
 reg [STEP_INTERVAL_BITS-1:0] q_interval = 0;
 reg [STEP_COUNT_BITS-1:0] q_count = 0;
 reg [STEP_ADD_BITS-1:0] q_add = 0;
-assign step_queue_wr_data = { MOVE_TYPE_KLIPPER, step_next_dir[channel], q_interval, q_count, q_add };
+assign step_queue_wr_data = { step_next_dir[channel], q_interval, q_count, q_add, MOVE_TYPE_KLIPPER };
 
 localparam PS_IDLE			= 0;
 localparam PS_CONFIG_STEPPER_1		= 1;
