@@ -113,6 +113,14 @@ module conan #(
 	inout wire uart4,
 	inout wire uart5,
 	inout wire uart6,
+`ifdef VERILATOR
+	input wire uart1_in,
+	input wire uart2_in,
+	input wire uart3_in,
+	input wire uart4_in,
+	input wire uart5_in,
+	input wire uart6_in,
+`endif
 	output wire step1,
 	output wire step2,
 	output wire step3,
@@ -177,6 +185,7 @@ module conan #(
  * 48MHz in -> 24MHz system clock
  *          -> 12MHz stepper driver clock
  */
+localparam HZ = 48000000;
 wire clk; 
 `ifdef VERILATOR
 assign clk = clk_48mhz;
@@ -223,7 +232,7 @@ framing #(
 	.RING_BITS(RING_BITS),
 	.LEN_BITS(LEN_BITS),
 	.LEN_FIFO_BITS(LEN_FIFO_BITS),
-	.HZ(24000000)
+	.HZ(HZ)
 ) u_framing (
 	.clk(clk),
 
@@ -276,7 +285,12 @@ always @(posedge clk) begin
 	end
 end
 
+wire [NUART-1:0] uart_in;
+wire [NUART-1:0] uart_out;
+wire [NUART-1:0] uart_en;
+
 command #(
+	.HZ(HZ),
 	.LEN_BITS(LEN_BITS),
 	.LEN_FIFO_BITS(LEN_FIFO_BITS),
 	.MOVE_COUNT(MOVE_COUNT),
@@ -317,7 +331,9 @@ command #(
 	.step({ step6, step5, step4, step3, step2, step1 }),
 	.dir({ dir6, dir5, dir4, dir3, dir2, dir1 }),
 	.endstop({ endstop8, endstop7, endstop6, endstop5, endstop4, endstop3, endstop2, endstop1 }),
-	.uart({ uart6, uart5, uart4, uart3, uart2, uart1 }),
+	.uart_in(uart_in),
+	.uart_out(uart_out),
+	.uart_en(uart_en),
 
 	.time_in(systime),
 	.time_out(systime_set),
@@ -327,6 +343,18 @@ command #(
 
 	.debug(cmd_debug)
 );
+
+`ifdef VERILATOR
+assign uart_in = { uart6_in, uart5_in, uart4_in, uart3_in, uart2_in, uart1_in };
+`else
+assign uart_in = { uart6, uart5, uart4, uart3, uart2, uart1 };
+`endif
+assign uart1 = uart_en[0] ? uart_out[0] : 1'bz;
+assign uart2 = uart_en[1] ? uart_out[1] : 1'bz;
+assign uart3 = uart_en[2] ? uart_out[2] : 1'bz;
+assign uart4 = uart_en[3] ? uart_out[3] : 1'bz;
+assign uart5 = uart_en[4] ? uart_out[4] : 1'bz;
+assign uart6 = uart_en[5] ? uart_out[5] : 1'bz;
 
 /*
  * Stepper driver

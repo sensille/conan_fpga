@@ -2,6 +2,7 @@
 `default_nettype none
 
 module command #(
+	parameter HZ = 48000000,
 	parameter RING_BITS = 8,
 	parameter LEN_BITS = 8,
 	parameter LEN_FIFO_BITS = 7,
@@ -47,7 +48,9 @@ module command #(
 	output wire [NSTEPDIR-1:0] step,
 	output wire [NSTEPDIR-1:0] dir,
 	input wire [NENDSTOP-1:0] endstop,
-	inout wire [NUART-1:0] uart,
+	input wire [NUART-1:0] uart_in,
+	output wire [NUART-1:0] uart_out,
+	output wire [NUART-1:0] uart_en,
 
 	input wire [63:0] time_in,
 	output wire [63:0] time_out,
@@ -77,7 +80,7 @@ localparam UNITS_BITS		= 4;
 localparam UNIT_PWM		= 4'd0;
 localparam UNIT_SYSTEM		= 4'd1;
 localparam UNIT_STEPPER		= 4'd2;
-localparam UNIT_UART		= 4'd3;
+localparam UNIT_TMCUART		= 4'd3;
 localparam UNIT_GPIO_OUT	= 4'd4;
 localparam UNIT_GPIO_IN		= 4'd5;
 localparam NUNITS		= 4'd6;
@@ -96,15 +99,17 @@ localparam CMD_STEPPER_GET_POS	= 9;
 localparam CMD_ENDSTOP_SET_STEPPER= 10;
 localparam CMD_ENDSTOP_QUERY	= 11;
 localparam CMD_ENDSTOP_HOME	= 12;
+localparam CMD_TMCUART_WRITE	= 13;
+localparam CMD_TMCUART_READ	= 14;
 
-localparam NCMDS		= 13;
+localparam NCMDS		= 15;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
 localparam RSP_GET_TIME		= 1;
 localparam RSP_STEPPER_GET_POS	= 2;
 localparam RSP_ENDSTOP_STATE	= 3;
-localparam RSP_UART_TRANSFER	= 4;
+localparam RSP_TMCUART_READ	= 4;
 
 /* BAD HACK, should go away soon */
 wire [ARGS_BITS-1:0] ARGS_0 = 0;
@@ -132,6 +137,8 @@ initial begin
 	cmdtab[CMD_ENDSTOP_SET_STEPPER] = { UNIT_STEPPER, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_ENDSTOP_QUERY] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b1 };
 	cmdtab[CMD_ENDSTOP_HOME] = { UNIT_STEPPER, ARGS_4, 1'b0, 1'b0 };
+	cmdtab[CMD_TMCUART_WRITE] = { UNIT_TMCUART, ARGS_4, 1'b0, 1'b0 };
+	cmdtab[CMD_TMCUART_READ] = { UNIT_TMCUART, ARGS_3, 1'b0, 1'b1 };
 end
 
 reg [ARGS_BITS-1:0] unit_arg_ptr = 0;
@@ -232,8 +239,34 @@ stepper #(
 	.endstop(endstop)
 );
 
+tmcuart #(
+	.HZ(HZ),
+	.NUART(NUART),
+	.CMD_TMCUART_WRITE(CMD_TMCUART_WRITE),
+	.CMD_TMCUART_READ(CMD_TMCUART_READ),
+	.RSP_TMCUART_READ(RSP_TMCUART_READ)
+) u_tmcuart (
+	.clk(clk),
+	.systime(systime),
+
+	.arg_data(unit_arg_data),
+	.arg_advance(unit_arg_advance[UNIT_TMCUART]),
+	.cmd(unit_cmd),
+	.cmd_ready(unit_cmd_ready[UNIT_TMCUART]),
+	.cmd_done(unit_cmd_done[UNIT_TMCUART]),
+
+	.param_data(unit_param_data[UNIT_TMCUART]),
+	.param_write(unit_param_write[UNIT_TMCUART]),
+
+	.invol_req(unit_invol_req[UNIT_TMCUART]),
+	.invol_grant(unit_invol_grant[UNIT_TMCUART]),
+
+	.uart_in(uart_in),
+	.uart_out(uart_out),
+	.uart_en(uart_en)
+);
+
 assign gpio_out = 0;
-assign uart = 0;
 
 localparam MST_IDLE = 0;
 localparam MST_PARSE_ARG_START = 1;
