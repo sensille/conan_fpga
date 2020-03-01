@@ -87,6 +87,20 @@ assign arg_advance = 1;
 always @(posedge clk) begin
 	if (cmd_done)
 		cmd_done <= 0;
+
+	/*
+	 * pwm duration safety feature. Must be before state
+	 * machine because pwm_duration is set on load.
+	 */
+	for (i = 0; i < NPWM; i = i + 1) begin
+		if (duration[i] == 1) begin
+			on_ticks[i] <= { PWM_BITS { default_value[i] } };
+		end
+		if (duration[i] != 0) begin
+			duration[i] <= duration[i] - 1;
+		end
+	end
+
 	if (state == PS_IDLE && cmd_ready) begin
 		// common to all cmds
 		channel <= arg_data[NPWM_BITS-1:0];
@@ -120,18 +134,6 @@ always @(posedge clk) begin
 		state <= PS_IDLE;
 	end
 
-	/*
-	 * pwm duration safety feature. Must be before state
-	 * machine because pwm_duration is set on load.
-	 */
-	for (i = 0; i < NPWM; i = i + 1) begin
-		if (duration[i] == 1) begin
-			on_ticks[i] <= { PWM_BITS { default_value[i] } };
-		end
-		if (duration[i] != 0) begin
-			duration[i] <= duration[i] - 1;
-		end
-	end
 	/*
 	 * loading of pwm_on_ticks, schedule
 	 */

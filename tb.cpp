@@ -22,6 +22,10 @@
 #define CMD_ENDSTOP_HOME	12
 #define CMD_TMCUART_WRITE	13
 #define CMD_TMCUART_READ	14
+#define CMD_SET_DIGITAL_OUT	15
+#define CMD_CONFIG_DIGITAL_OUT	16
+#define CMD_SCHEDULE_DIGITAL_OUT 17
+#define CMD_UPDATE_DIGITAL_OUT	18
 
 #define RSP_GET_VERSION		0
 #define RSP_GET_TIME		1
@@ -1490,7 +1494,7 @@ tmcuart_init(sim_t *sp, vluint8_t *in, vluint8_t *out, vluint8_t *en, int mask)
 	uart_send_vlq_and_wait(sp, 5, CMD_TMCUART_WRITE, 2, 0, 10, 0x1234);
 
 	/* read */
-	uart_send_vlq(sp, 5, CMD_TMCUART_READ, 2, 0, 10);
+	uart_send_vlq(sp, 4, CMD_TMCUART_READ, 2, 0, 10);
 	wait_for_uart_vlq(sp, 3, rsp);
 	if (rsp[0] != RSP_TMCUART_READ)
 		fail("tmcuart read version failed\n");
@@ -1499,11 +1503,75 @@ tmcuart_init(sim_t *sp, vluint8_t *in, vluint8_t *out, vluint8_t *en, int mask)
 	if (rsp[2] != 0x1234)
 		fail("tmcuart read bad register content %x\n", rsp[2]);
 
+	delay(sp, 1000);
 	watch_clear(sp->wp);
 	for (i = 0; i < 6; ++i) {
 		free(sp->tmcuart[i]);
 		sp->tmcuart[i] = NULL;
 	}
+}
+
+static void
+test_gpio(sim_t *sp)
+{
+	uart_send_t *usp = sp->usp;
+	uart_recv_t *urp = sp->urp;
+	Vconan *tb = sp->tb;
+	int i;
+
+	watch_add(sp->wp, "^gpio", "io", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "gpio.state", "state", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_command.msg_state", "msg_state", NULL, FORM_DEC, WF_ALL);
+
+	/* directly set gpio */
+	uart_send_vlq_and_wait(sp, 3, CMD_SET_DIGITAL_OUT, 2, 1);
+	delay(sp, 100);
+	if (!(tb->conan__DOT__gpio & 4))
+		fail("failed to set gpio 2\n");
+
+	uart_send_vlq_and_wait(sp, 3, CMD_SET_DIGITAL_OUT, 2, 0);
+	delay(sp, 100);
+	if ((tb->conan__DOT__gpio & 4))
+		fail("failed to reset gpio 2\n");
+
+	/* set via update */
+	uart_send_vlq_and_wait(sp, 3, CMD_UPDATE_DIGITAL_OUT, 2, 1);
+	delay(sp, 100);
+	if (!(tb->conan__DOT__gpio & 4))
+		fail("failed to set gpio 2 via update\n");
+
+	uart_send_vlq_and_wait(sp, 3, CMD_UPDATE_DIGITAL_OUT, 2, 0);
+	delay(sp, 100);
+	if ((tb->conan__DOT__gpio & 4))
+		fail("failed to clr gpio 2 via update\n");
+
+	/* CONFIGURE_GPIO, channel,  value, default_value, max_duration */
+	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_DIGITAL_OUT, 2, 1, 1, 50000);
+	delay(sp, 100);
+	if (!(tb->conan__DOT__gpio & 4))
+		fail("failed to set gpio 2 via configure\n");
+
+	/* give it 100000 cycles to process the message */
+	uint32_t sched = sp->cycle + 100000;
+	printf("schedule for %d\n", sched);
+	uart_send_vlq(sp, 4, CMD_SCHEDULE_DIGITAL_OUT, 2, (uint32_t)(sp->cycle + 100000), 0);
+	delay(sp, 50000);
+	/* see that it's not yet scheduled */
+	if (sp->cycle > sched - 5000)
+		fail("waited too long for test");
+	if (!(tb->conan__DOT__gpio & 4))
+		fail("digital out reset prematurely\n");
+	delay(sp, 50001);
+	if (sp->cycle < sched)
+		fail("waited not long enough");
+	if ((tb->conan__DOT__gpio & 4))
+		fail("digital out not cleared on time\n");
+
+	/* wait until max duration (+one cycle) is over. pwm should be set to default */
+	delay(sp, 152000 - (sp->cycle - sched));
+	printf("test it's the default of 1\n");
+	if (!(tb->conan__DOT__gpio & 4))
+		fail("digital out now reset by duration\n");
 }
 
 static void
@@ -1516,6 +1584,7 @@ test(sim_t *sp)
 	test_pwm(sp);
 	test_stepper(sp);
 	test_tmcuart(sp);
+	test_gpio(sp);
 
 	printf("test succeeded after %d cycles\n", sp->cycle);
 

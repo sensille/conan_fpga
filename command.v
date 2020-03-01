@@ -7,8 +7,7 @@ module command #(
 	parameter LEN_BITS = 8,
 	parameter LEN_FIFO_BITS = 7,
 	parameter MOVE_COUNT = 512,
-	parameter NGPIO_OUT = 40,
-	parameter NGPIO_IN = 40,
+	parameter NGPIO = 9,
 	parameter NPWM = 12,
 	parameter NSTEPDIR = 6,
 	parameter NENDSTOP = 8,
@@ -42,8 +41,7 @@ module command #(
 	/*
 	 * I/O
 	 */
-	output wire [NGPIO_OUT-1:0] gpio_out,
-	input wire [NGPIO_IN-1:0] gpio_in,
+	output wire [NGPIO-1:0] gpio,
 	output wire [NPWM-1:0] pwm,
 	output wire [NSTEPDIR-1:0] step,
 	output wire [NSTEPDIR-1:0] dir,
@@ -81,28 +79,30 @@ localparam UNIT_PWM		= 4'd0;
 localparam UNIT_SYSTEM		= 4'd1;
 localparam UNIT_STEPPER		= 4'd2;
 localparam UNIT_TMCUART		= 4'd3;
-localparam UNIT_GPIO_OUT	= 4'd4;
-localparam UNIT_GPIO_IN		= 4'd5;
-localparam NUNITS		= 4'd6;
+localparam UNIT_GPIO		= 4'd4;
+localparam NUNITS		= 4'd5;
 
 localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 1;
-localparam CMD_GET_VERSION	= 0;
-localparam CMD_SYNC_TIME	= 1;
-localparam CMD_GET_TIME		= 2;
-localparam CMD_CONFIG_PWM	= 3;
-localparam CMD_SCHEDULE_PWM	= 4;
-localparam CMD_CONFIG_STEPPER	= 5;
-localparam CMD_QUEUE_STEP	= 6;
-localparam CMD_SET_NEXT_STEP_DIR= 7;
-localparam CMD_RESET_STEP_CLOCK	= 8;
-localparam CMD_STEPPER_GET_POS	= 9;
-localparam CMD_ENDSTOP_SET_STEPPER= 10;
-localparam CMD_ENDSTOP_QUERY	= 11;
-localparam CMD_ENDSTOP_HOME	= 12;
-localparam CMD_TMCUART_WRITE	= 13;
-localparam CMD_TMCUART_READ	= 14;
-
-localparam NCMDS		= 15;
+localparam CMD_GET_VERSION		= 0;
+localparam CMD_SYNC_TIME		= 1;
+localparam CMD_GET_TIME			= 2;
+localparam CMD_CONFIG_PWM		= 3;
+localparam CMD_SCHEDULE_PWM		= 4;
+localparam CMD_CONFIG_STEPPER		= 5;
+localparam CMD_QUEUE_STEP		= 6;
+localparam CMD_SET_NEXT_STEP_DIR	= 7;
+localparam CMD_RESET_STEP_CLOCK		= 8;
+localparam CMD_STEPPER_GET_POS		= 9;
+localparam CMD_ENDSTOP_SET_STEPPER	= 10;
+localparam CMD_ENDSTOP_QUERY		= 11;
+localparam CMD_ENDSTOP_HOME		= 12;
+localparam CMD_TMCUART_WRITE		= 13;
+localparam CMD_TMCUART_READ		= 14;
+localparam CMD_SET_DIGITAL_OUT		= 15;
+localparam CMD_CONFIG_DIGITAL_OUT	= 16;
+localparam CMD_SCHEDULE_DIGITAL_OUT	= 17;
+localparam CMD_UPDATE_DIGITAL_OUT	= 18;
+localparam NCMDS			= 19;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
@@ -139,6 +139,10 @@ initial begin
 	cmdtab[CMD_ENDSTOP_HOME] = { UNIT_STEPPER, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_TMCUART_WRITE] = { UNIT_TMCUART, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_TMCUART_READ] = { UNIT_TMCUART, ARGS_3, 1'b0, 1'b1 };
+	cmdtab[CMD_SET_DIGITAL_OUT] = { UNIT_GPIO, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_CONFIG_DIGITAL_OUT] = { UNIT_GPIO, ARGS_4, 1'b0, 1'b0 };
+	cmdtab[CMD_SCHEDULE_DIGITAL_OUT] = { UNIT_GPIO, ARGS_3, 1'b0, 1'b0 };
+	cmdtab[CMD_UPDATE_DIGITAL_OUT] = { UNIT_GPIO, ARGS_2, 1'b0, 1'b0 };
 end
 
 reg [ARGS_BITS-1:0] unit_arg_ptr = 0;
@@ -266,7 +270,30 @@ tmcuart #(
 	.uart_en(uart_en)
 );
 
-assign gpio_out = 0;
+gpio #(
+	.NGPIO(NGPIO),
+	.CMD_SET_DIGITAL_OUT(CMD_SET_DIGITAL_OUT),
+	.CMD_CONFIG_DIGITAL_OUT(CMD_CONFIG_DIGITAL_OUT),
+	.CMD_SCHEDULE_DIGITAL_OUT(CMD_SCHEDULE_DIGITAL_OUT),
+	.CMD_UPDATE_DIGITAL_OUT(CMD_UPDATE_DIGITAL_OUT)
+) u_gpio (
+	.clk(clk),
+	.systime(systime),
+
+	.arg_data(unit_arg_data),
+	.arg_advance(unit_arg_advance[UNIT_GPIO]),
+	.cmd(unit_cmd),
+	.cmd_ready(unit_cmd_ready[UNIT_GPIO]),
+	.cmd_done(unit_cmd_done[UNIT_GPIO]),
+
+	.param_data(unit_param_data[UNIT_GPIO]),
+	.param_write(unit_param_write[UNIT_GPIO]),
+
+	.invol_req(unit_invol_req[UNIT_GPIO]),
+	.invol_grant(unit_invol_grant[UNIT_GPIO]),
+
+	.gpio(gpio)
+);
 
 localparam MST_IDLE = 0;
 localparam MST_PARSE_ARG_START = 1;
@@ -494,8 +521,19 @@ always @(posedge clk) begin
 	end
 end
 
+reg [3:0] msg_state_pre;
+reg [3:0] msg_state_pre_pre;
+always @(posedge clk) begin
+	if (msg_state != msg_state_pre) begin
+		msg_state_pre_pre <= msg_state_pre;
+		msg_state_pre <= msg_state;
+	end
+end
 assign debug[3:0] = msg_state;
-assign debug[11:4] = msg_cmd;
-assign debug[63:12] = 0;
+assign debug[7:4] = msg_state_pre;
+assign debug[11:8] = msg_state_pre_pre;
+assign debug[19:12] = msg_cmd;
+assign debug[UNITS_BITS+19:20] = unit;
+assign debug[31:UNITS_BITS+20] = 0;
 
 endmodule

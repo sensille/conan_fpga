@@ -6,8 +6,7 @@ module conan #(
 	parameter LEN_BITS = 6,
 	parameter LEN_FIFO_BITS = 5,
 	parameter MOVE_COUNT = 512,
-	parameter NGPIO_OUT = 40,
-	parameter NGPIO_IN = 40,
+	parameter NGPIO = 9,
 	parameter NPWM = 12,
 	parameter NSTEPDIR = 6,
 	parameter NENDSTOP = 8,
@@ -265,7 +264,7 @@ framing #(
 /* verilator lint_on PINCONNECTEMPTY */
 );
 
-wire [63:0] cmd_debug;
+wire [31:0] cmd_debug;
 
 /*
  * on-board LEDs
@@ -280,7 +279,7 @@ always @(posedge clk) begin
 		systime <= systime_set;
 	else
 		systime <= systime + 1;
-	if (systime[20:0] == 0) begin
+	if (systime[21:0] == 0) begin
 		leds <= { leds[6:0], leds[7] };
 	end
 end
@@ -289,13 +288,14 @@ wire [NUART-1:0] uart_in;
 wire [NUART-1:0] uart_out;
 wire [NUART-1:0] uart_en;
 
+wire [NGPIO-1:0] gpio;
+
 command #(
 	.HZ(HZ),
 	.LEN_BITS(LEN_BITS),
 	.LEN_FIFO_BITS(LEN_FIFO_BITS),
 	.MOVE_COUNT(MOVE_COUNT),
-	.NGPIO_OUT(NGPIO_OUT),
-	.NGPIO_IN(NGPIO_IN),
+	.NGPIO(NGPIO),
 	.NPWM(NPWM),
 	.NSTEPDIR(NSTEPDIR),
 	.NENDSTOP(NENDSTOP),
@@ -325,8 +325,7 @@ command #(
 	.send_ring_full(),
 
 	/* I/O */
-	.gpio_out(),
-	.gpio_in(),
+	.gpio(gpio),
 	.pwm({ pwm12, pwm11, pwm10, pwm9, pwm8, pwm7, pwm6, pwm5, pwm4, pwm3, pwm2, pwm1 }),
 	.step({ step6, step5, step4, step3, step2, step1 }),
 	.dir({ dir6, dir5, dir4, dir3, dir2, dir1 }),
@@ -359,6 +358,7 @@ assign uart6 = uart_en[5] ? uart_out[5] : 1'bz;
 /*
  * Stepper driver
  */
+/* XXX assign to gpio[0] */
 assign enn = 1'b1;
 
 /*
@@ -523,7 +523,9 @@ assign ldata[128] = fpga6;
 assign ldata[127] = clk_48mhz;
 assign ldata[126] = clk_50mhz;
 
-assign ldata[125:64] = 0;
+assign ldata[125:117] = gpio;
+assign ldata[116:96] = 0;
+assign ldata[95:64] = cmd_debug;
 
 assign ldata[63:0] = systime;
 

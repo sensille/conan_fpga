@@ -72,7 +72,7 @@ uart #(
 always @(*) begin: uartmux
 	integer i;
 
-	for (i = 0; i < NUART; ++i) begin
+	for (i = 0; i < NUART; i++) begin
 		if (i == channel) begin
 			uart_out[i] = uart_tx;
 			uart_en[i] = wire_en;
