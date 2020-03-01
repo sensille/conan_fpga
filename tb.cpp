@@ -1246,7 +1246,7 @@ static tmcuart_t *
 tmcuart_init(sim_t *sp, vluint8_t *in, vluint8_t *out, const char *name)
 {
 	tmcuart_t *tu = (tmcuart_t *)calloc(sizeof(*tu), 1);
-	uint64_t d = HZ / 200000;	/* uart divider */
+	uint64_t d = HZ / 250000;	/* uart divider */
 
 	tu->urp = uart_recv_init(&tu->uart_in, d, name);
 	tu->usp = uart_send_init(&tu->uart_out, d, name);
@@ -1326,7 +1326,7 @@ tmcuart_tick(sim_t *sp)
 			if (urp->pos != tu->last_pos)
 				tu->last_change = sp->cycle;
 			if (tu->last_change && (sp->cycle - tu->last_change) >
-			    HZ / 200000 * 63) {
+			    HZ / 250000 * 63) {
 				printf("tmcuart reset\n");
 				tmcuart_reset(tu);
 			}
@@ -1335,14 +1335,14 @@ tmcuart_tick(sim_t *sp)
 		if (tu->state == TU_IGNORE) {
 			/* already examined the packet, it's bad */
 		} else if (tu->state == TU_READ && urp->pos == 4) {
-			if ((urp->buf[0] & 0xf0) == 0xa0 &&
+			if ((urp->buf[0] & 0x0f) == 0x05 &&
 			    urp->buf[1] == 0x00 &&
-			    (urp->buf[2] & 1) == 0) {
+			    (urp->buf[2] & 0x80) == 0) {
 				/* read request, check crc */
 				crc = tmcuart_crc(urp->buf, 3);
 				if (urp->buf[3] == crc) {
 					tu->state = TU_TURNAROUND;
-					tu->delay = HZ / 200000 * 8; /* 8 bit times turnaround */
+					tu->delay = HZ / 250000 * 8; /* 8 bit times turnaround */
 				} else {
 					printf("crc mismatch, ignore: %02x != %02x\n", urp->buf[3], crc);
 					tu->state = TU_IGNORE;
@@ -1350,13 +1350,13 @@ tmcuart_tick(sim_t *sp)
 			}
 		} else if (tu->state == TU_READ && urp->pos == 8) {
 			/* check write */
-			if ((urp->buf[0] & 0xf0) == 0xa0 &&
+			if ((urp->buf[0] & 0x0f) == 0x05 &&
 			    urp->buf[1] == 0x00 &&
-			    (urp->buf[2] & 1) == 1) {
+			    (urp->buf[2] & 0x80) == 0x80) {
 				/* read request, check crc */
 				crc = tmcuart_crc(urp->buf, 7);
 				if (urp->buf[7] == crc) {
-					int reg = urp->buf[2] >> 1;
+					int reg = urp->buf[2] & 0x7f;
 					uint32_t data = (urp->buf[3] << 24) | (urp->buf[4] << 16) |
 							(urp->buf[5] << 8) | urp->buf[6];
 					tu->regs[reg] = data;
@@ -1372,7 +1372,7 @@ tmcuart_tick(sim_t *sp)
 			}
 		} else if (tu->state == TU_TURNAROUND && --tu->delay == 0) {
 			uint8_t outbuf[8];
-			int reg = urp->buf[2] >> 1;
+			int reg = urp->buf[2] & 0x7f;
 
 			printf("received valid read for reg %d\n", reg);
 			outbuf[0] = 0xa0;
@@ -1389,7 +1389,7 @@ tmcuart_tick(sim_t *sp)
 		} else if (tu->state == TU_WRITE) {
 			if (uart_send_done(usp)) {
 				tu->state = TU_TURNBACK;
-				tu->delay = HZ / 200000 * 12;
+				tu->delay = HZ / 250000 * 12;
 			}
 		} else if (tu->state == TU_TURNBACK && --tu->delay == 0) {
 			tu->state = TU_READ;

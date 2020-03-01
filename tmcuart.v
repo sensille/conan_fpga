@@ -267,7 +267,7 @@ always @(posedge clk) begin
 		data <= 0;
 		state <= PS_TMCUART_RECV_1;
 	end else if (state == PS_TMCUART_RECV_1 && uart_rx_ready) begin
-		if (uart_rx_data[0:3] != 4'b0101) begin
+		if (uart_rx_data[3:0] != 4'b0101) begin
 			status <= RE_SYNC;
 			state <= PS_TMCUART_RECV_ERROR;
 		end
