@@ -741,7 +741,6 @@ init(Vconan *tb)
 
 	sp->wp = watch_init(tb);
 	tb->fpga5 = 0;
-	tb->fpga6 = 0;
 
 	return sp;
 }
@@ -907,7 +906,6 @@ test_time(sim_t *sp)
 	watch_add(wp, "systime_set$", "time_set", NULL, FORM_DEC, WF_ALL);
 	watch_add(wp, "systime_set_en$", "time_set_en", NULL, FORM_BIN, WF_ALL);
 	watch_add(wp, "fpga5", "fpga5", NULL, FORM_BIN, WF_ALL);
-	watch_add(wp, "fpga6", "fpga6", NULL, FORM_BIN, WF_ALL);
 
 	/* send version request */
 	uint32_t rsp[3];
@@ -924,11 +922,6 @@ test_time(sim_t *sp)
 	printf("delaying %d to get to sync cycle %d = 0x%x\n",
 		sync_cycle - sp->cycle, sync_cycle, sync_cycle);
 	delay(sp, sync_cycle - sp->cycle + 100);
-
-	tb->fpga6 = 1;
-	delay(sp, 10);
-	tb->fpga6 = 0;
-	delay(sp, 10);
 
 	uart_send_vlq_and_wait(sp, 3, CMD_SYNC_TIME, (uint32_t)(sync_cycle & 0xffffffffull),
 		(uint32_t)(sync_cycle >> 32));

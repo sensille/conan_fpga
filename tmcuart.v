@@ -40,9 +40,9 @@ module tmcuart #(
 */
 
 /*
- * at 12 MHz, max rate is 750k. We go for a fixed 200k
+ * at 12 MHz, max rate is 750k. We go for a fixed 250k as on the host interfac3
  */
-localparam BAUD = 200000;
+localparam BAUD = 250000;
 localparam BITTIME = HZ / BAUD;
 wire uart_rx;
 wire uart_tx;
@@ -188,9 +188,9 @@ always @(posedge clk) begin
 		state <= PS_TMCUART_4;
 	end else if (state == PS_TMCUART_4) begin
 		/* start transfer */
-		uart_tx_data <= 8'b10100000;
+		uart_tx_data <= 8'b00000101;
 		uart_tx_en <= 1;
-		crc_in <= 8'b10100000;
+		crc_in <= 8'b00000101;
 		crc_in_en <= 1;
 		state <= PS_TMCUART_5;
 	end else if (state == PS_TMCUART_5 && !uart_tx_en && !uart_transmitting) begin
@@ -200,9 +200,9 @@ always @(posedge clk) begin
 		crc_in_en <= 1;
 		state <= PS_TMCUART_6;
 	end else if (state == PS_TMCUART_6 && !uart_tx_en && !uart_transmitting) begin
-		uart_tx_data <= { register, !rdwr };
+		uart_tx_data <= { !rdwr, register };
 		uart_tx_en <= 1;
-		crc_in <= { register, !rdwr };
+		crc_in <= { !rdwr, register };
 		crc_in_en <= 1;
 		if (rdwr)
 			state <= PS_TMCUART_CRC;
@@ -267,7 +267,7 @@ always @(posedge clk) begin
 		data <= 0;
 		state <= PS_TMCUART_RECV_1;
 	end else if (state == PS_TMCUART_RECV_1 && uart_rx_ready) begin
-		if (uart_rx_data[7:4] != 4'b1010) begin
+		if (uart_rx_data[0:3] != 4'b0101) begin
 			status <= RE_SYNC;
 			state <= PS_TMCUART_RECV_ERROR;
 		end
@@ -283,7 +283,7 @@ always @(posedge clk) begin
 		crc_in_en <= 1;
 		state <= PS_TMCUART_RECV_3;
 	end else if (state == PS_TMCUART_RECV_3 && uart_rx_ready) begin
-		if (uart_rx_data != { register, 1'b0 }) begin
+		if (uart_rx_data != { 1'b0, register }) begin
 			status <= RE_REGISTER;
 			state <= PS_TMCUART_RECV_ERROR;
 		end

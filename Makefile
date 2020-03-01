@@ -20,6 +20,7 @@ $(TARGET).json: $(SRC) $(TARGET).lpf Makefile
 
 verilate: vrun
 v: vrun
+test: vrun
 
 obj_dir/$(TARGET).mk: $(SRC) Makefile
 	verilator --public -Wall -CFLAGS -g --exe --cc $(TARGET).v verilator.vlt tb.cpp

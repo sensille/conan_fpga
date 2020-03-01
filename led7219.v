@@ -22,7 +22,7 @@ localparam ST_DATA6 = 9;
 localparam ST_DATA7 = 10;
 localparam ST_DATA8 = 11;
 
-reg [4:0] clk_div = 0;
+reg [5:0] clk_div = 0;
 reg [3:0] state = 0;
 reg [6:0] bit_cnt = 0;
 reg [63:0] dout = 0;
@@ -31,7 +31,7 @@ assign leds_out = dout[63];
 
 always @(posedge clk) begin
 	clk_div <= clk_div + 5'b1;
-	leds_clk <= clk_div[4];
+	leds_clk <= clk_div[5];
 	if (clk_div == 0) begin
 		if (bit_cnt == 0)
 			leds_cs <= 0;

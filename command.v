@@ -53,9 +53,7 @@ module command #(
 	input wire [63:0] time_in,
 	output wire [63:0] time_out,
 	output wire time_out_en,
-	input wire timesync_pulse_in,
 	input wire timesync_latch_in,
-
 
 	/*
 	 * debug
@@ -205,7 +203,6 @@ system #(
 	.time_in(time_in),
 	.time_out(time_out),
 	.time_out_en(time_out_en),
-	.timesync_pulse_in(timesync_pulse_in),
 	.timesync_latch_in(timesync_latch_in)
 );
 

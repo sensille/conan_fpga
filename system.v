@@ -28,18 +28,13 @@ module system #(
 	input wire [63:0] time_in,
 	output reg [63:0] time_out,
 	output reg time_out_en,
-	input wire timesync_pulse_in,
 	input wire timesync_latch_in
 );
 
-reg timesync_pulse = 0;
-reg timesync_pulse1 = 0;
 reg timesync_latch = 0;
 reg timesync_latch1 = 0;
-/* sync timesync_pulse and timesync_latch into our clock domain */
+/* sync timesync_latch into our clock domain */
 always @(posedge clk) begin
-	timesync_pulse <= timesync_pulse1;
-	timesync_pulse1 <= timesync_pulse_in;
 	timesync_latch <= timesync_latch1;
 	timesync_latch1 <= timesync_latch_in;
 end
@@ -104,13 +99,10 @@ always @(posedge clk) begin
 		state <= PS_IDLE;
 	end
 
-	if (timesync_pulse ^ prev_pulse) begin
-		if (!latched)
-			latched_time <= time_in;
-	end else if (timesync_latch && !prev_latch) begin
-		latched <= 1;
+	// latch time on falling edge of timesync_latch
+	if (timesync_latch == 0 && prev_latch == 1) begin
+		latched_time <= time_in;
 	end
-	prev_pulse <= timesync_pulse;
 	prev_latch <= timesync_latch;
 end
 

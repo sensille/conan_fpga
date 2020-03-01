@@ -97,7 +97,7 @@ module conan #(
 	input wire chain_out_in1,
 	input wire chain_out_in2,
 
-	input wire esp_tx,
+	output wire esp_tx,
 	input wire esp_en,
 	input wire esp_rst,
 	input wire esp_gpio2,
@@ -337,8 +337,7 @@ command #(
 	.time_in(systime),
 	.time_out(systime_set),
 	.time_out_en(systime_set_en),
-	.timesync_pulse_in(fpga5),
-	.timesync_latch_in(fpga6),
+	.timesync_latch_in(fpga5),
 
 	.debug(cmd_debug)
 );
@@ -532,7 +531,8 @@ assign ldata[63:0] = systime;
 /*
  * direct output for scope debugging
  */
-assign esp_rx = fpga1;
-assign esp_flash = fpga2;
+assign esp_rx = fpga1;		/* rx */
+assign esp_flash = fpga2;	/* tx */
+assign esp_tx = fpga5;		/* timesync */
 
 endmodule
