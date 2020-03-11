@@ -32,8 +32,8 @@ module conan #(
 	input wire exp2_13,
 	input wire exp2_12,
 	input wire exp2_11,
-	input wire exp2_10,
-	input wire exp2_9,
+	output wire exp2_10,
+	output wire exp2_9,
 	input wire exp2_8,
 	input wire exp2_7,
 	input wire exp2_6,
@@ -357,8 +357,7 @@ assign uart6 = uart_en[5] ? uart_out[5] : 1'bz;
 /*
  * Stepper driver
  */
-/* XXX assign to gpio[0] */
-assign enn = 1'b1;
+assign enn = gpio[0];
 
 /*
  * watchdog
@@ -534,5 +533,7 @@ assign ldata[63:0] = systime;
 assign esp_rx = fpga1;		/* rx */
 assign esp_flash = fpga2;	/* tx */
 assign esp_tx = fpga5;		/* timesync */
+assign exp2_9 = step1;
+assign exp2_10 = dir1;
 
 endmodule

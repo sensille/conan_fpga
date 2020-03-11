@@ -24,7 +24,7 @@ module gpio #(
 	output reg invol_req = 0,
 	input wire invol_grant,
 
-	output reg [NGPIO-1:0] gpio = 0
+	output reg [NGPIO-1:0] gpio = { NGPIO { 1'b1 } }
 );
 
 reg [31:0] next_time[NGPIO];
