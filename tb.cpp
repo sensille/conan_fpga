@@ -876,9 +876,9 @@ test_version(sim_t *sp)
 	watch_add(wp, "u_command.msg_state", "cstate", NULL, FORM_DEC, WF_ALL);
 
 	/* send version request */
-	uint32_t rsp[2];
+	uint32_t rsp[4];
 	uart_send_vlq(sp, 1, CMD_GET_VERSION);
-	wait_for_uart_vlq(sp, 2, rsp);
+	wait_for_uart_vlq(sp, 4, rsp);
 
 	if (rsp[0] != 0 || rsp[1] != 0x42) {
 		printf("received incorrect version rsp\n");

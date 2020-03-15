@@ -8,7 +8,13 @@ module system #(
 	parameter CMD_SYNC_TIME = 0,
 	parameter CMD_GET_TIME = 0,
 	parameter RSP_GET_TIME = 0,
-	parameter VERSION = 1
+	parameter VERSION = 1,
+	parameter MOVE_COUNT = 0,
+	parameter NGPIO = 0,
+	parameter NPWM = 0,
+	parameter NSTEPDIR = 0,
+	parameter NENDSTOP = 0,
+	parameter NUART = 0
 ) (
 	input wire clk,
 	input wire [31:0] systime,
@@ -39,11 +45,13 @@ always @(posedge clk) begin
 	timesync_latch1 <= timesync_latch_in;
 end
 localparam PS_IDLE = 0;
-localparam PS_RESPONSE_END = 1;
-localparam PS_SYNC_TIME_1 = 2;
-localparam PS_GET_TIME_1  = 3;
-localparam PS_GET_TIME_2  = 4;
-localparam PS_MAX = 4;
+localparam PS_GET_VERSION_1 = 1;
+localparam PS_GET_VERSION_2 = 2;
+localparam PS_GET_VERSION_3 = 3;
+localparam PS_SYNC_TIME_1 = 4;
+localparam PS_GET_TIME_1  = 5;
+localparam PS_GET_TIME_2  = 6;
+localparam PS_MAX = 6;
 localparam PS_BITS = $clog2(PS_MAX + 1);
 
 reg [63:0] latched_time = 0;
@@ -63,7 +71,7 @@ always @(posedge clk) begin
 		if (cmd == CMD_GET_VERSION) begin
 			param_data <= VERSION;
 			param_write <= 1;
-			state <= PS_RESPONSE_END;
+			state <= PS_GET_VERSION_1;
 		end else if (cmd == CMD_SYNC_TIME) begin
 			state <= PS_SYNC_TIME_1;
 			temp_data <= arg_data;
@@ -73,6 +81,21 @@ always @(posedge clk) begin
 			param_write <= 1;
 			state <= PS_GET_TIME_1;
 		end
+	end else if (state == PS_GET_VERSION_1) begin
+		param_data[31:24] <= NGPIO;
+		param_data[23:16] <= NPWM;
+		param_data[15:8] <= NSTEPDIR;
+		param_data[7:0] <= NENDSTOP;
+		state <= PS_GET_VERSION_2;
+	end else if (state == PS_GET_VERSION_2) begin
+		param_data[31:24] <= NUART;
+		param_data[15:0] <= MOVE_COUNT;
+		state <= PS_GET_VERSION_3;
+	end else if (state == PS_GET_VERSION_3) begin
+		cmd_done <= 1;
+		param_write <= 0;
+		param_data <= RSP_GET_VERSION;
+		state <= PS_IDLE;
 	end else if (state == PS_SYNC_TIME_1) begin
 		/*
 		 * +4, because we need 2 cycles to sync the pulse into our
@@ -91,11 +114,6 @@ always @(posedge clk) begin
 		cmd_done <= 1;
 		param_write <= 0;
 		param_data <= RSP_GET_TIME;
-		state <= PS_IDLE;
-	end else if (state == PS_RESPONSE_END) begin
-		cmd_done <= 1;
-		param_write <= 0;
-		param_data <= RSP_GET_VERSION;
 		state <= PS_IDLE;
 	end
 
