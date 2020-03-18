@@ -78,6 +78,7 @@ reg [NSTEPDIR-1:0] step_next_dir = 0;
 reg [NSTEPDIR-1:0] step_start = 0;
 reg [NSTEPDIR-1:0] step_reset = 0;
 reg [NSTEPDIR-1:0] step_start_pending = 0;
+reg [NSTEPDIR-1:0] start_time_set = 0;
 reg [31:0] step_start_time [NSTEPDIR];
 wire [31:0] step_position[NSTEPDIR];
 reg dedge[NSTEPDIR];
@@ -213,7 +214,21 @@ always @(posedge clk) begin: main
 		state <= PS_IDLE;
 	end else if (state == PS_QUEUE_STEP_1) begin
 		/* <channel> <interval> <count> <add> */
-		q_interval <= arg_data[STEP_INTERVAL_BITS-1:0];
+		if (start_time_set[channel]) begin
+			/*
+			 * first queued command triggers the start timer. Replace the
+			 * interval by 1 and instead start the machine at the given
+			 * time. Otherwise we'd need the full 32 bit interval in the
+			 * queue
+			 */
+			step_start_pending[channel] <= 1;
+			start_time_set[channel] <= 0;
+			step_start_time[channel] <= step_start_time[channel] + arg_data;
+			/* stepdir needs 3 clocks from queue to queue */
+			q_interval <= 3;
+		end else begin
+			q_interval <= arg_data[STEP_INTERVAL_BITS-1:0];
+		end
 		state <= PS_QUEUE_STEP_2;
 	end else if (state == PS_QUEUE_STEP_2) begin
 		q_count <= arg_data[STEP_COUNT_BITS-1:0];
@@ -228,9 +243,9 @@ always @(posedge clk) begin: main
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_RESET_STEP_CLOCK_1) begin
-		/* the start time has 2 cycles delay. subtract them here, so we're spot on */
-		step_start_time[channel] <= arg_data - 2;
-		step_start_pending[channel] <= 1;
+		/* the start time has 5 cycles delay. subtract them here, so we're spot on */
+		step_start_time[channel] <= arg_data - 5;
+		start_time_set[channel] <= 1;
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_STEPPER_GET_POS_1) begin

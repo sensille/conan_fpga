@@ -67,7 +67,7 @@ reg [STEP_COUNT_BITS-1:0] count = 0;
 reg [STEP_ADD_BITS-1:0] add = 0;
 wire [STEP_INTERVAL_BITS-1:0] signed_add = { {(STEP_INTERVAL_BITS - STEP_ADD_BITS) { add[STEP_ADD_BITS-1] }}, add };
 
-reg [3:0] step_delay = 0;
+reg [2:0] step_delay = 0;
 
 always @(posedge clk) begin
 	if (queue_rd_en)
@@ -109,7 +109,7 @@ always @(posedge clk) begin
 				step <= !step;
 			end else begin
 				step <= 1;
-				step_delay <= 8;
+				step_delay <= 7;
 			end
 			if (dir)
 				position <= position + 1;

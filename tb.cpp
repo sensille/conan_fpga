@@ -1013,7 +1013,7 @@ _check_stepdir(sim_t *sp, int interval, int count, int add, int dir, int *step, 
 			else if (first && i == 0)
 				exp = 0;
 			else
-				exp = j < 2;
+				exp = j < 8;
 
 			if (tb->step1 != exp)
 				fail("step line does not match expectation: %d != %d at i %d j %d\n",
@@ -1069,7 +1069,9 @@ test_stepper(sim_t *sp)
 	watch_add(sp->wp, "0..u_stepdir.reset", "reset", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "unit_invol_req", "ivrq", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "unit_invol_grant", "ivgr", NULL, FORM_DEC, WF_ALL);
+
 #if 0
+	watch_add(sp->wp, "0..u_stepdir.q_interval", "iv", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "0..u_stepdir.curr_interval", "curr_iv", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "0..u_stepdir.interval", "iv", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "0..u_stepdir.count", "count", NULL, FORM_DEC, WF_ALL);
@@ -1081,22 +1083,26 @@ test_stepper(sim_t *sp)
 	watch_add(sp->wp, "u_framing.recv_state", "recv_state", NULL, FORM_DEC, WF_ALL);
 #endif
 
+	uint32_t start = sp->cycle;
 	uart_send_vlq_and_wait(sp, 3, CMD_CONFIG_STEPPER, 0, 1); /* dedge */
+	uart_send_vlq_and_wait(sp, 3, CMD_RESET_STEP_CLOCK, 0, start);
+	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 250000, 1, 0);
 	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 1000, 10, -10);
 	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 100, 10, 0);
 	uart_send_vlq_and_wait(sp, 3, CMD_SET_NEXT_STEP_DIR, 0, 1);
 	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 200, 10, 10);
-	uint32_t start = sp->cycle + 50000;
-	printf("schedule start for %d\n", start);
-	uart_send_vlq_and_wait(sp, 3, CMD_RESET_STEP_CLOCK, 0, start);
 
+	start += 250000 - 10;
+
+	printf("schedule start for %d\n", start);
 	/* wait for the scheduled time to arrive */
 	delay(sp, start - sp->cycle);
 
 	/* check step/dir each cycle until the program ends */
 	int step1 = 0;
 	int steppos = 0;
-	_check_stepdir(sp, 1000, 10, -10, 0, &step1, &steppos, 1);
+	_check_stepdir(sp, 10, 1, 0, 0, &step1, &steppos, 1);
+	_check_stepdir(sp, 1000, 10, -10, 0, &step1, &steppos, 0);
 	_check_stepdir(sp, 100, 10, 0, 0, &step1, &steppos, 0);
 	_check_stepdir(sp, 200, 10, 10, 1, &step1, &steppos, 0);
 	/* check step keeps low for another 2000 cycles */
@@ -1137,12 +1143,14 @@ test_stepper(sim_t *sp)
 	uart_send_vlq_and_wait(sp, 3, CMD_ENDSTOP_SET_STEPPER, 1, 0);
 	uart_send_vlq_and_wait(sp, 3, CMD_CONFIG_STEPPER, 0, 1); /* dedge */
 	uart_send_vlq_and_wait(sp, 3, CMD_SET_NEXT_STEP_DIR, 0, 0);
+	start = sp->cycle;
+	uart_send_vlq_and_wait(sp, 3, CMD_RESET_STEP_CLOCK, 0, start);
+	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 100000, 1, 0);
 	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 1000, 100, 0);
-	start = sp->cycle + 50000;
-	printf("schedule start for %d\n", start);
+	start += 100000;
+	printf("schedule start for %d (test homing)\n", start);
 	/* CMD_ENDSTOP_HOME in: <endstop-channel> <time> <sample_count> <pin_value> */
 	uart_send_vlq_and_wait(sp, 5, CMD_ENDSTOP_HOME, 1, start, 10, 0);
-	uart_send_vlq_and_wait(sp, 3, CMD_RESET_STEP_CLOCK, 0, start);
 
 	/* see that endstop is reported as homing */
 	uart_send_vlq(sp, 2, CMD_ENDSTOP_QUERY, 1);
@@ -1192,11 +1200,13 @@ test_stepper(sim_t *sp)
 	 */
 	printf("test homing abort\n");
 	tb->endstop2 = 1;
-	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 1000, 100, 0);
-	start = sp->cycle + 50000;
-	printf("schedule start for %d\n", start);
-	uart_send_vlq_and_wait(sp, 5, CMD_ENDSTOP_HOME, 1, start, 10, 0);
+	start = sp->cycle;
 	uart_send_vlq_and_wait(sp, 3, CMD_RESET_STEP_CLOCK, 0, start);
+	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 100000, 1, 0);
+	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 1000, 100, 0);
+	start += 100000;
+	printf("schedule start for %d (homing abort)\n", start);
+	uart_send_vlq_and_wait(sp, 5, CMD_ENDSTOP_HOME, 1, start, 10, 0);
 
 	/* wait for the scheduled time to arrive */
 	delay(sp, start - sp->cycle);
@@ -1218,19 +1228,24 @@ test_stepper(sim_t *sp)
 	 */
 	printf("test move without dedge\n");
 	uart_send_vlq_and_wait(sp, 3, CMD_CONFIG_STEPPER, 0, 0);
+	start = sp->cycle;
+	uart_send_vlq_and_wait(sp, 3, CMD_RESET_STEP_CLOCK, 0, start);
+	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 150000, 1, 0);
 	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 1000, 10, -10);
 	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 500, 10, 10);
-	start = sp->cycle + 50000;
-	printf("schedule start for %d\n", start);
-	uart_send_vlq_and_wait(sp, 3, CMD_RESET_STEP_CLOCK, 0, start);
+
+	start += 150000 - 10;
+
+	printf("schedule start for %d (no dedge)\n", start);
 
 	/* wait for the scheduled time to arrive */
 	delay(sp, start - sp->cycle);
 
 	/* check step/dir each cycle until the program ends */
-	_check_stepdir(sp, 1000, 10, -10, 0, NULL, &steppos, 1);
+	_check_stepdir(sp, 10, 1, 0, 0, NULL, &steppos, 1);
+	_check_stepdir(sp, 1000, 10, -10, 0, NULL, &steppos, 0);
 	_check_stepdir(sp, 500, 10, 10, 0, NULL, &steppos, 0);
-	delay(sp, 2);	/* final step pulse */
+	delay(sp, 8);	/* final step pulse */
 	/* check step keeps low for another 2000 cycles */
 	for (i = 0; i < 2000; ++i)
 		if (tb->step1 != 0)
