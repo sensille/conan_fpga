@@ -1003,10 +1003,13 @@ _check_stepdir(sim_t *sp, int interval, int count, int add, int dir, int *step, 
 	int i;
 	int j;
 	Vconan *tb = sp->tb;
+	int init_dir = tb->dir1;
+	int dircnt = 0;
 
 	for (i = 0; i < count; ++i) {
 		for (j = 0; j < interval; ++j) {
 			int exp;
+			int dir_exp;
 
 			if (step)
 				exp = *step;
@@ -1016,11 +1019,13 @@ _check_stepdir(sim_t *sp, int interval, int count, int add, int dir, int *step, 
 				exp = j < 8;
 
 			if (tb->step1 != exp)
-				fail("step line does not match expectation: %d != %d at i %d j %d\n",
-					tb->step1, exp, i, j);
-			if (tb->dir1 != dir)
-				fail("dir line does not match expectation: %d != %d at i %d j %d\n",
-					tb->dir1, dir, i, j);
+				fail("%d: step line does not match expectation: %d != %d at i %d j %d\n",
+					sp->cycle, tb->step1, exp, i, j);
+			dir_exp = dircnt < 8 ? init_dir : dir;
+			if (tb->dir1 != dir_exp)
+				fail("%d: dir line does not match expectation: %d != %d at i %d j %d\n",
+					sp->cycle, tb->dir1, dir_exp, i, j);
+			++dircnt;
 			yield(sp);
 		}
 		
@@ -1054,14 +1059,10 @@ test_stepper(sim_t *sp)
 
 	watch_add(sp->wp, "step1", "step", NULL, FORM_BIN, WF_ALL);
 	watch_add(sp->wp, "dir1", "dir", NULL, FORM_BIN, WF_ALL);
-	watch_add(sp->wp, "step_start$", "start", NULL, FORM_BIN, WF_ALL);
-	watch_add(sp->wp, "\\.step_reset", "reset", NULL, FORM_BIN, WF_ALL);
 #if 0
 	watch_add(sp->wp, "endstop_step_reset", "esreset", NULL, FORM_HEX, WF_ALL);
 	watch_add(sp->wp, "endstop_stepper", "esst", NULL, FORM_BIN, WF_ALL);
 #endif
-	watch_add(sp->wp, "step_start_pending", "pending", NULL, FORM_BIN, WF_ALL);
-	watch_add(sp->wp, "step_start_time", "time", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_stepper.state", "state", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_stepper.cmd_ready", "rdy", NULL, FORM_BIN, WF_ALL);
 	watch_add(sp->wp, "u_command.msg_state", "msg_state", NULL, FORM_DEC, WF_ALL);
@@ -1071,11 +1072,13 @@ test_stepper(sim_t *sp)
 	watch_add(sp->wp, "unit_invol_grant", "ivgr", NULL, FORM_DEC, WF_ALL);
 
 #if 0
-	watch_add(sp->wp, "0..u_stepdir.q_interval", "iv", NULL, FORM_DEC, WF_ALL);
-	watch_add(sp->wp, "0..u_stepdir.curr_interval", "curr_iv", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "0..u_stepdir.next_step", "next_step", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "0..u_stepdir.q_interval", "q_iv", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "0..u_stepdir.interval", "iv", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "0..u_stepdir.count", "count", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "0..u_stepdir.add", "add", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "0..u_stepdir.queue_rd_data", "q", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "0..u_stepdir.queue_empty", "queue_empty", NULL, FORM_HEX, WF_ALL);
 #endif
 #if 0
 	watch_add(sp->wp, "u_command.msg_data", "msg_data", NULL, FORM_HEX, WF_ALL);
@@ -1145,9 +1148,12 @@ test_stepper(sim_t *sp)
 	uart_send_vlq_and_wait(sp, 3, CMD_SET_NEXT_STEP_DIR, 0, 0);
 	start = sp->cycle;
 	uart_send_vlq_and_wait(sp, 3, CMD_RESET_STEP_CLOCK, 0, start);
-	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 100000, 1, 0);
+	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 200000, 1, 0);
+	/* during this move we'll stop the homing */
 	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 1000, 100, 0);
-	start += 100000;
+	/* this move has to be flushed */
+	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 888, 88, 0);
+	start += 200000;
 	printf("schedule start for %d (test homing)\n", start);
 	/* CMD_ENDSTOP_HOME in: <endstop-channel> <time> <sample_count> <pin_value> */
 	uart_send_vlq_and_wait(sp, 5, CMD_ENDSTOP_HOME, 1, start, 10, 0);

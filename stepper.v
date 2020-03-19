@@ -66,22 +66,21 @@ in: <endstop-channel> <time> <sample_count> <pin_value>
  */
 localparam MOVE_TYPE_KLIPPER = 3'b000;
 localparam MOVE_TYPE_BITS = 3;
-localparam STEP_INTERVAL_BITS = 22;
-localparam STEP_COUNT_BITS = 26;
-localparam STEP_ADD_BITS = 20;
+localparam STEP_INTERVAL_BITS = 32;
+localparam STEP_COUNT_BITS = 32;
+localparam STEP_ADD_BITS = 32;
 localparam MOVE_COUNT = 512;
-wire [71:0] step_queue_wr_data;
+localparam STEP_DATA_WIDTH = MOVE_TYPE_BITS + STEP_INTERVAL_BITS + STEP_COUNT_BITS + STEP_ADD_BITS + 1;
+wire [STEP_DATA_WIDTH-1:0] step_queue_wr_data;
 reg [NSTEPDIR-1:0] step_queue_wr_en = 0;
 wire [NSTEPDIR-1:0] step_queue_empty;
 wire [NSTEPDIR-1:0] step_running;
 reg [NSTEPDIR-1:0] step_next_dir = 0;
-reg [NSTEPDIR-1:0] step_start = 0;
 reg [NSTEPDIR-1:0] step_reset = 0;
-reg [NSTEPDIR-1:0] step_start_pending = 0;
-reg [NSTEPDIR-1:0] start_time_set = 0;
-reg [31:0] step_start_time [NSTEPDIR];
 wire [31:0] step_position[NSTEPDIR];
-reg dedge[NSTEPDIR];
+reg [NSTEPDIR-1:0] dedge = 0;
+reg [31:0] reset_clock = 0;
+reg [NSTEPDIR-1:0] do_reset_clock = 0;
 
 genvar stepdir_gi;
 generate
@@ -99,9 +98,11 @@ generate
 			.queue_wr_en(step_queue_wr_en[stepdir_gi]),
 			.queue_empty(step_queue_empty[stepdir_gi]),
 			.running(step_running[stepdir_gi]),
-			.start(step_start[stepdir_gi]),
 			.reset(step_reset[stepdir_gi]),
 			.dedge(dedge[stepdir_gi]),
+			.do_reset_clock(do_reset_clock[stepdir_gi]),
+			.reset_clock(reset_clock),
+			.clock(systime),
 			.step(step[stepdir_gi]),
 			.dir(dir[stepdir_gi]),
 			.position(step_position[stepdir_gi])
@@ -184,7 +185,7 @@ always @(posedge clk) begin: main
 
 	if (cmd_done)
 		cmd_done <= 0;
-	step_start <= 0;
+	do_reset_clock <= 0;
 	step_queue_wr_en <= 0;
 	if (state == PS_IDLE && cmd_ready) begin
 		// common to all cmds
@@ -214,21 +215,7 @@ always @(posedge clk) begin: main
 		state <= PS_IDLE;
 	end else if (state == PS_QUEUE_STEP_1) begin
 		/* <channel> <interval> <count> <add> */
-		if (start_time_set[channel]) begin
-			/*
-			 * first queued command triggers the start timer. Replace the
-			 * interval by 1 and instead start the machine at the given
-			 * time. Otherwise we'd need the full 32 bit interval in the
-			 * queue
-			 */
-			step_start_pending[channel] <= 1;
-			start_time_set[channel] <= 0;
-			step_start_time[channel] <= step_start_time[channel] + arg_data;
-			/* stepdir needs 3 clocks from queue to queue */
-			q_interval <= 3;
-		end else begin
-			q_interval <= arg_data[STEP_INTERVAL_BITS-1:0];
-		end
+		q_interval <= arg_data[STEP_INTERVAL_BITS-1:0];
 		state <= PS_QUEUE_STEP_2;
 	end else if (state == PS_QUEUE_STEP_2) begin
 		q_count <= arg_data[STEP_COUNT_BITS-1:0];
@@ -243,9 +230,9 @@ always @(posedge clk) begin: main
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_RESET_STEP_CLOCK_1) begin
-		/* the start time has 5 cycles delay. subtract them here, so we're spot on */
-		step_start_time[channel] <= arg_data - 5;
-		start_time_set[channel] <= 1;
+		/* one clock delay in stepdir */
+		reset_clock <= arg_data - 1;
+		do_reset_clock[channel] <= 1;
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_STEPPER_GET_POS_1) begin
@@ -304,16 +291,6 @@ always @(posedge clk) begin: main
 				channel <= i;
 				state <= PS_ENDSTOP_QUERY_1;
 			end
-		end
-	end
-
-	/*
-	 * reset_step_time handling
-	 */
-	for (i = 0; i < NSTEPDIR; i = i + 1) begin
-		if (step_start_pending[i] && systime == step_start_time[i]) begin
-			step_start_pending[i] <= 0;
-			step_start[i] <= 1;
 		end
 	end
 
