@@ -100,7 +100,8 @@ localparam CMD_SET_DIGITAL_OUT		= 15;
 localparam CMD_CONFIG_DIGITAL_OUT	= 16;
 localparam CMD_SCHEDULE_DIGITAL_OUT	= 17;
 localparam CMD_UPDATE_DIGITAL_OUT	= 18;
-localparam NCMDS			= 19;
+localparam CMD_SHUTDOWN			= 19;
+localparam NCMDS			= 20;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
@@ -110,14 +111,14 @@ localparam RSP_ENDSTOP_STATE	= 3;
 localparam RSP_TMCUART_READ	= 4;
 
 /* BAD HACK, should go away soon */
-wire [ARGS_BITS-1:0] ARGS_0 = 0;
-wire [ARGS_BITS-1:0] ARGS_1 = 1;
-wire [ARGS_BITS-1:0] ARGS_2 = 2;
-wire [ARGS_BITS-1:0] ARGS_3 = 3;
-wire [ARGS_BITS-1:0] ARGS_4 = 4;
-wire [ARGS_BITS-1:0] ARGS_5 = 5;
-wire [ARGS_BITS-1:0] ARGS_6 = 6;
-wire [ARGS_BITS-1:0] ARGS_7 = 7;
+localparam [ARGS_BITS-1:0] ARGS_0 = 0;
+localparam [ARGS_BITS-1:0] ARGS_1 = 1;
+localparam [ARGS_BITS-1:0] ARGS_2 = 2;
+localparam [ARGS_BITS-1:0] ARGS_3 = 3;
+localparam [ARGS_BITS-1:0] ARGS_4 = 4;
+localparam [ARGS_BITS-1:0] ARGS_5 = 5;
+localparam [ARGS_BITS-1:0] ARGS_6 = 6;
+localparam [ARGS_BITS-1:0] ARGS_7 = 7;
 
 reg [CMDTAB_SIZE-1:0] cmdtab[NCMDS];
 /* { unit, nargs, string_arg, cmd_has_response } */
@@ -141,7 +142,10 @@ initial begin
 	cmdtab[CMD_CONFIG_DIGITAL_OUT] = { UNIT_GPIO, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_SCHEDULE_DIGITAL_OUT] = { UNIT_GPIO, ARGS_3, 1'b0, 1'b0 };
 	cmdtab[CMD_UPDATE_DIGITAL_OUT] = { UNIT_GPIO, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_SHUTDOWN] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b0 };
 end
+
+wire shutdown; /* set by command, never cleared */
 
 reg [ARGS_BITS-1:0] unit_arg_ptr = 0;
 reg [31:0] unit_arg_data = 0;
@@ -173,7 +177,9 @@ pwm #(
 	.invol_req(unit_invol_req[UNIT_PWM]),
 	.invol_grant(unit_invol_grant[UNIT_PWM]),
 
-	.pwm(pwm)
+	.pwm(pwm),
+
+	.shutdown(shutdown)
 );
 
 system #(
@@ -182,6 +188,7 @@ system #(
 	.CMD_SYNC_TIME(CMD_SYNC_TIME),
 	.CMD_GET_TIME(CMD_GET_TIME),
 	.RSP_GET_TIME(RSP_GET_TIME),
+	.CMD_SHUTDOWN(CMD_SHUTDOWN),
 	.VERSION(VERSION),
 	.MOVE_COUNT(MOVE_COUNT),
 	.NGPIO(NGPIO),
@@ -209,7 +216,9 @@ system #(
 	.time_in(time_in),
 	.time_out(time_out),
 	.time_out_en(time_out_en),
-	.timesync_latch_in(timesync_latch_in)
+	.timesync_latch_in(timesync_latch_in),
+
+	.shutdown(shutdown)
 );
 
 stepper #(
@@ -243,7 +252,9 @@ stepper #(
 
 	.step(step),
 	.dir(dir),
-	.endstop(endstop)
+	.endstop(endstop),
+
+	.shutdown(shutdown)
 );
 
 tmcuart #(
@@ -270,7 +281,9 @@ tmcuart #(
 
 	.uart_in(uart_in),
 	.uart_out(uart_out),
-	.uart_en(uart_en)
+	.uart_en(uart_en),
+
+	.shutdown(shutdown)
 );
 
 gpio #(
@@ -295,7 +308,9 @@ gpio #(
 	.invol_req(unit_invol_req[UNIT_GPIO]),
 	.invol_grant(unit_invol_grant[UNIT_GPIO]),
 
-	.gpio(gpio)
+	.gpio(gpio),
+
+	.shutdown(shutdown)
 );
 
 localparam MST_IDLE = 0;

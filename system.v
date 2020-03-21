@@ -8,6 +8,7 @@ module system #(
 	parameter CMD_SYNC_TIME = 0,
 	parameter CMD_GET_TIME = 0,
 	parameter RSP_GET_TIME = 0,
+	parameter CMD_SHUTDOWN = 0,
 	parameter VERSION = 1,
 	parameter MOVE_COUNT = 0,
 	parameter NGPIO = 0,
@@ -34,7 +35,9 @@ module system #(
 	input wire [63:0] time_in,
 	output reg [63:0] time_out,
 	output reg time_out_en,
-	input wire timesync_latch_in
+	input wire timesync_latch_in,
+
+	output reg shutdown = 0
 );
 
 reg timesync_latch = 0;
@@ -80,6 +83,10 @@ always @(posedge clk) begin
 			param_data <= time_in[31:0];
 			param_write <= 1;
 			state <= PS_GET_TIME_1;
+		end else if (cmd == CMD_SHUTDOWN) begin
+			shutdown <= 1;
+			cmd_done <= 1;
+			state <= PS_IDLE;
 		end
 	end else if (state == PS_GET_VERSION_1) begin
 		param_data[31:24] <= NGPIO;

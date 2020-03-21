@@ -24,7 +24,9 @@ module gpio #(
 	output reg invol_req = 0,
 	input wire invol_grant,
 
-	output reg [NGPIO-1:0] gpio = { NGPIO { 1'b1 } }
+	output reg [NGPIO-1:0] gpio = { NGPIO { 1'b1 } },
+
+	input wire shutdown
 );
 
 reg [31:0] next_time[NGPIO];
@@ -73,7 +75,7 @@ always @(posedge clk) begin
 	 * machine because gpio_duration is set on load.
 	 */
 	for (i = 0; i < NGPIO; i = i + 1) begin
-		if (duration[i] == 1) begin
+		if (shutdown || duration[i] == 1) begin
 			gpio[i] <= default_value[i];
 		end
 		if (duration[i] != 0) begin

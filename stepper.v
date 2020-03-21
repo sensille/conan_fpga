@@ -33,7 +33,9 @@ module stepper #(
 
 	output reg [NSTEPDIR-1:0] step,
 	output reg [NSTEPDIR-1:0] dir,
-	input wire [NENDSTOP-1:0] endstop
+	input wire [NENDSTOP-1:0] endstop,
+
+	input wire shutdown
 );
 
 /*
@@ -137,7 +139,10 @@ initial begin: init_endstop1
 end
 always @(*) begin: init_endstop2
 	integer i;
-	step_reset = 0;
+	if (shutdown)
+		step_reset = { NSTEPDIR { 1'b1 }};
+	else
+		step_reset = 0;
 	for (i = 0; i < NENDSTOP; i = i + 1) begin
 		if (endstop_step_reset[i]) begin
 			step_reset = step_reset | endstop_stepper[i];

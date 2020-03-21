@@ -22,7 +22,9 @@ module pwm #(
 	output reg invol_req = 0,
 	input wire invol_grant,
 
-	output reg [NPWM-1:0] pwm = 0
+	output reg [NPWM-1:0] pwm = 0,
+
+	input wire shutdown
 );
 
 /*
@@ -93,8 +95,8 @@ always @(posedge clk) begin
 	 * machine because pwm_duration is set on load.
 	 */
 	for (i = 0; i < NPWM; i = i + 1) begin
-		if (duration[i] == 1) begin
-			on_ticks[i] <= { PWM_BITS { default_value[i] } };
+		if (shutdown || duration[i] == 1) begin
+			on_ticks[i] <= { PWM_BITS { !default_value[i] } };
 		end
 		if (duration[i] != 0) begin
 			duration[i] <= duration[i] - 1;

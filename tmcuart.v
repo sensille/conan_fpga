@@ -27,7 +27,9 @@ module tmcuart #(
 	input wire [NUART-1:0] uart_in,
 	//output reg [NUART-1:0] uart_out = { NUART { 1'b1 } },
 	output wire [NUART-1:0] uart_out,
-	output reg [NUART-1:0] uart_en = { NUART { 1'b1 } }
+	output reg [NUART-1:0] uart_en = { NUART { 1'b1 } },
+
+	input wire shutdown	/* not used */
 );
 
 /*
