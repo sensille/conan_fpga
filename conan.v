@@ -100,7 +100,7 @@ module conan #(
 	output wire esp_tx,
 	input wire esp_en,
 	input wire esp_rst,
-	input wire esp_gpio2,
+	output wire esp_gpio2,
 	output wire esp_flash,
 	output wire esp_rx,
 
@@ -264,7 +264,7 @@ framing #(
 /* verilator lint_on PINCONNECTEMPTY */
 );
 
-wire [31:0] cmd_debug;
+wire [52:0] cmd_debug;
 
 /*
  * on-board LEDs
@@ -522,8 +522,7 @@ assign ldata[127] = clk_48mhz;
 assign ldata[126] = clk_50mhz;
 
 assign ldata[125:117] = gpio;
-assign ldata[116:96] = 0;
-assign ldata[95:64] = cmd_debug;
+assign ldata[116:64] = cmd_debug;
 
 assign ldata[63:0] = systime;
 
@@ -533,6 +532,7 @@ assign ldata[63:0] = systime;
 assign esp_rx = fpga1;		/* rx */
 assign esp_flash = fpga2;	/* tx */
 assign esp_tx = fpga5;		/* timesync */
+assign esp_gpio2 = cmd_debug[30];
 assign exp2_9 = step1;
 assign exp2_10 = dir1;
 

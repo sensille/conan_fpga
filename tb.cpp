@@ -1114,31 +1114,37 @@ test_stepper(sim_t *sp)
 
 	/* check position */
 	uart_send_vlq(sp, 2, CMD_STEPPER_GET_POS, 0);
-	uint32_t rsp[3];
-	wait_for_uart_vlq(sp, 2, rsp);
+	uint32_t rsp[4];
+	wait_for_uart_vlq(sp, 3, rsp);
 	if (rsp[0] != RSP_STEPPER_GET_POS)
 		fail("received incorrect rsp to STEPPER_GET_POS\n");
-	if (rsp[1] != steppos)
+	if (rsp[1] != 0)
+		fail("received bad channel\n");
+	if (rsp[2] != steppos)
 		fail("stepper pos does not match: %d != %d\n", rsp[1], steppos);
 
 	tb->endstop2 = 0;
 	uart_send_vlq(sp, 2, CMD_ENDSTOP_QUERY, 1);
-	wait_for_uart_vlq(sp, 3, rsp);
+	wait_for_uart_vlq(sp, 4, rsp);
 	if (rsp[0] != RSP_ENDSTOP_STATE)
 		fail("received incorrect rsp to ENDSTOP_QUERY\n");
-	if (rsp[1] != 0)
-		fail("endstop state homing\n");
+	if (rsp[1] != 1)
+		fail("received bad channel\n");
 	if (rsp[2] != 0)
+		fail("endstop state homing\n");
+	if (rsp[3] != 0)
 		fail("endstop state not 0\n");
 
 	tb->endstop2 = 1;
 	uart_send_vlq(sp, 2, CMD_ENDSTOP_QUERY, 1);
-	wait_for_uart_vlq(sp, 3, rsp);
+	wait_for_uart_vlq(sp, 4, rsp);
 	if (rsp[0] != RSP_ENDSTOP_STATE)
 		fail("received incorrect rsp to ENDSTOP_QUERY\n");
-	if (rsp[1] != 0)
+	if (rsp[1] != 1)
+		fail("received bad channel\n");
+	if (rsp[2] != 0)
 		fail("endstop state homing\n");
-	if (rsp[2] != 1)
+	if (rsp[3] != 1)
 		fail("endstop state not 1\n");
 
 	/*
@@ -1161,12 +1167,14 @@ test_stepper(sim_t *sp)
 
 	/* see that endstop is reported as homing */
 	uart_send_vlq(sp, 2, CMD_ENDSTOP_QUERY, 1);
-	wait_for_uart_vlq(sp, 3, rsp);
+	wait_for_uart_vlq(sp, 4, rsp);
 	if (rsp[0] != RSP_ENDSTOP_STATE)
 		fail("received incorrect rsp to ENDSTOP_QUERY\n");
 	if (rsp[1] != 1)
-		fail("endstop state homing\n");
+		fail("received bad channel\n");
 	if (rsp[2] != 1)
+		fail("endstop state homing\n");
+	if (rsp[3] != 1)
 		fail("endstop state not 1\n");
 
 	/* wait for the scheduled time to arrive */
@@ -1187,12 +1195,14 @@ test_stepper(sim_t *sp)
 	if (tb->step1 != !step1)
 		fail("step reset by homing\n");
 	
-	wait_for_uart_vlq(sp, 3, rsp);
+	wait_for_uart_vlq(sp, 4, rsp);
 	if (rsp[0] != RSP_ENDSTOP_STATE)
 		fail("received incorrect rsp to ENDSTOP_QUERY\n");
-	if (rsp[1] != 0)
-		fail("endstop state homing\n");
+	if (rsp[1] != 1)
+		fail("received bad channel\n");
 	if (rsp[2] != 0)
+		fail("endstop state homing\n");
+	if (rsp[3] != 0)
 		fail("endstop state not 0\n");
 
 	/* reset has to be cleared */
@@ -1221,8 +1231,8 @@ test_stepper(sim_t *sp)
 	uart_send_vlq_and_wait(sp, 5, CMD_ENDSTOP_HOME, 1, 0, 0, 0);
 	
 	uart_send_vlq(sp, 2, CMD_ENDSTOP_QUERY, 1);
-	wait_for_uart_vlq(sp, 3, rsp);
-	if (rsp[0] != RSP_ENDSTOP_STATE || rsp[1] != 0 || rsp[2] != 1)
+	wait_for_uart_vlq(sp, 4, rsp);
+	if (rsp[0] != RSP_ENDSTOP_STATE || rsp[1] != 1 || rsp[2] != 0 || rsp[3] != 1)
 		fail("homing abort failed\n");
 
 	/* wait for move to finish */
@@ -1472,24 +1482,28 @@ tmcuart_init(sim_t *sp, vluint8_t *in, vluint8_t *out, vluint8_t *en, int mask)
 	watch_add(sp->wp, "tmcuart.crc_count", "cnt", NULL, FORM_HEX, WF_ALL);
 
 	/* read version */
-	uint32_t rsp[3];
+	uint32_t rsp[4];
 	uart_send_vlq(sp, 4, CMD_TMCUART_READ, 2, 0, IOIN);
-	wait_for_uart_vlq(sp, 3, rsp);
+	wait_for_uart_vlq(sp, 4, rsp);
 	if (rsp[0] != RSP_TMCUART_READ)
 		fail("tmcuart read version failed\n");
-	if (rsp[1] != 0)
+	if (rsp[1] != 2)
+		fail("received bad channel\n");
+	if (rsp[2] != 0)
 		fail("tmcuart read status %d\n", rsp[1]);
-	if (rsp[2] != 0x21000000)
+	if (rsp[3] != 0x21000000)
 		fail("tmcuart read bad version %x\n", rsp[2]);
 
 	/* timeout on a different slave */
 	uart_send_vlq(sp, 4, CMD_TMCUART_READ, 2, 1, IOIN);
-	wait_for_uart_vlq(sp, 3, rsp);
+	wait_for_uart_vlq(sp, 4, rsp);
 	if (rsp[0] != RSP_TMCUART_READ)
 		fail("tmcuart test timeout\n");
-	if (rsp[1] != 1)
+	if (rsp[1] != 2)
+		fail("received bad channel\n");
+	if (rsp[2] != 1)
 		fail("tmcuart read status %d\n", rsp[1]);
-	if (rsp[2] != 0)
+	if (rsp[3] != 0)
 		fail("tmcuart read bad version %x\n", rsp[2]);
 	/* reset receiver, it received zeros due to problems with verilator and 'z' */
 	tmcuart_reset(sp->tmcuart[2]);
@@ -1497,12 +1511,14 @@ tmcuart_init(sim_t *sp, vluint8_t *in, vluint8_t *out, vluint8_t *en, int mask)
 	/* read version again */
 	printf("read version again\n");
 	uart_send_vlq(sp, 4, CMD_TMCUART_READ, 2, 0, IOIN);
-	wait_for_uart_vlq(sp, 3, rsp);
+	wait_for_uart_vlq(sp, 4, rsp);
 	if (rsp[0] != RSP_TMCUART_READ)
 		fail("tmcuart read version failed\n");
-	if (rsp[1] != 0)
+	if (rsp[1] != 2)
+		fail("received bad channel\n");
+	if (rsp[2] != 0)
 		fail("tmcuart read status %d\n", rsp[1]);
-	if (rsp[2] != 0x21000000)
+	if (rsp[3] != 0x21000000)
 		fail("tmcuart read bad version %x\n", rsp[2]);
 
 	/* write */
@@ -1510,12 +1526,14 @@ tmcuart_init(sim_t *sp, vluint8_t *in, vluint8_t *out, vluint8_t *en, int mask)
 
 	/* read */
 	uart_send_vlq(sp, 4, CMD_TMCUART_READ, 2, 0, 10);
-	wait_for_uart_vlq(sp, 3, rsp);
+	wait_for_uart_vlq(sp, 4, rsp);
 	if (rsp[0] != RSP_TMCUART_READ)
 		fail("tmcuart read version failed\n");
-	if (rsp[1] != 0)
+	if (rsp[1] != 2)
+		fail("received bad channel\n");
+	if (rsp[2] != 0)
 		fail("tmcuart read status %d\n", rsp[1]);
-	if (rsp[2] != 0x1234)
+	if (rsp[3] != 0x1234)
 		fail("tmcuart read bad register content %x\n", rsp[2]);
 
 	delay(sp, 1000);

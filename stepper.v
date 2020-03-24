@@ -33,9 +33,11 @@ module stepper #(
 
 	output reg [NSTEPDIR-1:0] step,
 	output reg [NSTEPDIR-1:0] dir,
-	input wire [NENDSTOP-1:0] endstop,
+	input wire [NENDSTOP-1:0] endstop_in,
 
-	input wire shutdown
+	input wire shutdown,
+
+	output wire [28:0] debug
 );
 
 /*
@@ -119,8 +121,7 @@ reg [NENDSTOP-1:0] endstop_homing = 0;
 reg [NSTEPDIR-1:0] endstop_stepper[NENDSTOP-1:0];
 reg [31:0] endstop_time[NENDSTOP-1:0];
 reg [23:0] endstop_sample_count[NENDSTOP-1:0];
-reg [15:0] endstop_tick_cnt[NENDSTOP-1:0];
-reg [5:0] endstop_sample_cnt[NENDSTOP-1:0];
+reg [23:0] endstop_sample_cnt[NENDSTOP-1:0];
 reg endstop_pin_value[NENDSTOP];
 reg [NSTEPDIR-1:0] endstop_step_reset[NENDSTOP-1:0];
 reg [NENDSTOP-1:0] endstop_send_state = 0;
@@ -129,6 +130,7 @@ localparam ES_WAIT_FOR_CLOCK = 1;
 localparam ES_REST = 2;
 localparam ES_SAMPLE = 3;
 reg [1:0] endstop_state[NENDSTOP-1:0];
+reg [1:0] prev_state = 0;
 initial begin: init_endstop1
 	integer i;
 
@@ -150,6 +152,13 @@ always @(*) begin: init_endstop2
 	end
 end
 
+reg [NENDSTOP-1:0] _endstop = 0;
+reg [NENDSTOP-1:0] endstop = 0;
+always @(posedge clk) begin
+	_endstop <= endstop_in;
+	endstop <= _endstop;
+end
+
 localparam CHANNEL_BITS = $clog2(NENDSTOP > NSTEPDIR ? NENDSTOP : NSTEPDIR);
 reg [CHANNEL_BITS-1:0] channel = 0;
 
@@ -168,15 +177,17 @@ localparam PS_SET_NEXT_STEP_DIR_1	= 5;
 localparam PS_RESET_STEP_CLOCK_1	= 6;
 localparam PS_STEPPER_GET_POS_1		= 7;
 localparam PS_STEPPER_GET_POS_2		= 8;
-localparam PS_ENDSTOP_SET_STEPPER_1	= 9;
-localparam PS_ENDSTOP_QUERY_1		= 10;
-localparam PS_ENDSTOP_QUERY_2		= 11;
-localparam PS_ENDSTOP_QUERY_3		= 12;
-localparam PS_ENDSTOP_HOME_1		= 13;
-localparam PS_ENDSTOP_HOME_2		= 14;
-localparam PS_ENDSTOP_HOME_3		= 15;
-localparam PS_WAIT_GRANT		= 16;
-localparam PS_MAX			= 16;
+localparam PS_STEPPER_GET_POS_3		= 9;
+localparam PS_ENDSTOP_SET_STEPPER_1	= 10;
+localparam PS_ENDSTOP_QUERY_1		= 11;
+localparam PS_ENDSTOP_QUERY_2		= 12;
+localparam PS_ENDSTOP_QUERY_3		= 13;
+localparam PS_ENDSTOP_QUERY_4		= 14;
+localparam PS_ENDSTOP_HOME_1		= 15;
+localparam PS_ENDSTOP_HOME_2		= 16;
+localparam PS_ENDSTOP_HOME_3		= 17;
+localparam PS_WAIT_GRANT		= 18;
+localparam PS_MAX			= 18;
 
 localparam PS_BITS = $clog2(PS_MAX + 1);
 localparam NENDSTOP_BITS = $clog2(NENDSTOP);
@@ -241,10 +252,13 @@ always @(posedge clk) begin: main
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_STEPPER_GET_POS_1) begin
-		param_data <= step_position[channel];
+		param_data <= channel;
 		param_write <= 1;
 		state <= PS_STEPPER_GET_POS_2;
 	end else if (state == PS_STEPPER_GET_POS_2) begin
+		param_data <= step_position[channel];
+		state <= PS_STEPPER_GET_POS_3;
+	end else if (state == PS_STEPPER_GET_POS_3) begin
 		cmd_done <= 1;
 		param_write <= 0;
 		param_data <= RSP_STEPPER_GET_POS;
@@ -255,13 +269,16 @@ always @(posedge clk) begin: main
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_ENDSTOP_QUERY_1) begin
-		param_data <= endstop_homing[channel];
+		param_data <= channel;
 		param_write <= 1;
 		state <= PS_ENDSTOP_QUERY_2;
 	end else if (state == PS_ENDSTOP_QUERY_2) begin
-		param_data <= endstop[channel];
+		param_data <= endstop_homing[channel];
 		state <= PS_ENDSTOP_QUERY_3;
 	end else if (state == PS_ENDSTOP_QUERY_3) begin
+		param_data <= endstop[channel];
+		state <= PS_ENDSTOP_QUERY_4;
+	end else if (state == PS_ENDSTOP_QUERY_4) begin
 		cmd_done <= 1;
 		param_write <= 0;
 		param_data <= RSP_ENDSTOP_STATE;
@@ -280,8 +297,8 @@ always @(posedge clk) begin: main
 			endstop_homing[channel] <= 0;	/* sample_count 0, cancel homing */
 		end else begin
 			endstop_homing[channel] <= 1;
+			endstop_state[channel] <= ES_WAIT_FOR_CLOCK;
 		end
-		endstop_state[channel] <= ES_WAIT_FOR_CLOCK;
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	/* send endstop state when in idle */
@@ -295,6 +312,7 @@ always @(posedge clk) begin: main
 				endstop_send_state[i] <= 0;
 				channel <= i;
 				state <= PS_ENDSTOP_QUERY_1;
+				i = NENDSTOP;
 			end
 		end
 	end
@@ -333,5 +351,12 @@ always @(posedge clk) begin: main
 		end
 	end
 end
+
+assign debug[0] = endstop_homing[2];
+assign debug[1] = endstop_send_state[2];
+assign debug[2] = endstop_pin_value[2];
+assign debug[3] = endstop[2];
+assign debug[5:4] = endstop_state[2];
+assign debug[6] = endstop[2];
 
 endmodule

@@ -73,6 +73,7 @@ always @(posedge clk) begin
 	/*
 	 * gpio duration safety feature. Must be before state
 	 * machine because gpio_duration is set on load.
+	 * duration = 0 turns this check off
 	 */
 	for (i = 0; i < NGPIO; i = i + 1) begin
 		if (shutdown || duration[i] == 1) begin

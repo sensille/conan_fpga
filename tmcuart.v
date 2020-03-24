@@ -114,11 +114,12 @@ localparam PS_TMCUART_RECV_8		= 21;
 localparam PS_TMCUART_RESPOND		= 22;
 localparam PS_TMCUART_RESPOND_1		= 23;
 localparam PS_TMCUART_RESPOND_2		= 24;
-localparam PS_TMCUART_DONE		= 25;
-localparam PS_TMCUART_END		= 26;
-localparam PS_TMCUART_RECV_ERROR	= 27;
-localparam PS_TMCUART_WRITE_DONE	= 28;
-localparam PS_MAX			= 28;
+localparam PS_TMCUART_RESPOND_3		= 25;
+localparam PS_TMCUART_DONE		= 26;
+localparam PS_TMCUART_END		= 27;
+localparam PS_TMCUART_RECV_ERROR	= 28;
+localparam PS_TMCUART_WRITE_DONE	= 29;
+localparam PS_MAX			= 29;
 localparam PS_BITS = $clog2(PS_MAX + 1);
 reg [PS_BITS-1:0] state = PS_IDLE;
 
@@ -326,14 +327,18 @@ always @(posedge clk) begin
 	end else if (state == PS_TMCUART_RECV_ERROR && delay == 0) begin
 		state <= PS_TMCUART_RESPOND;
 	end else if (state == PS_TMCUART_RESPOND) begin
-		param_data <= status;
+		param_data <= channel;
 		param_write <= 1;
 		state <= PS_TMCUART_RESPOND_1;
 	end else if (state == PS_TMCUART_RESPOND_1) begin
-		param_data <= data;
+		param_data <= status;
 		param_write <= 1;
 		state <= PS_TMCUART_RESPOND_2;
 	end else if (state == PS_TMCUART_RESPOND_2) begin
+		param_data <= data;
+		param_write <= 1;
+		state <= PS_TMCUART_RESPOND_3;
+	end else if (state == PS_TMCUART_RESPOND_3) begin
 		param_data <= RSP_TMCUART_READ;
 		param_write <= 0;
 		cmd_done <= 1;

@@ -93,10 +93,11 @@ always @(posedge clk) begin
 	/*
 	 * pwm duration safety feature. Must be before state
 	 * machine because pwm_duration is set on load.
+	 * duration = 0 turns this check off
 	 */
 	for (i = 0; i < NPWM; i = i + 1) begin
 		if (shutdown || duration[i] == 1) begin
-			on_ticks[i] <= { PWM_BITS { !default_value[i] } };
+			on_ticks[i] <= { PWM_BITS { default_value[i] } };
 		end
 		if (duration[i] != 0) begin
 			duration[i] <= duration[i] - 1;

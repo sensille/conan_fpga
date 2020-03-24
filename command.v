@@ -58,7 +58,7 @@ module command #(
 	/*
 	 * debug
 	 */
-	output wire [63:0] debug
+	output wire [52:0] debug
 );
 
 /*
@@ -221,6 +221,7 @@ system #(
 	.shutdown(shutdown)
 );
 
+wire [28:0] stepper_debug;
 stepper #(
 	.NSTEPDIR(NSTEPDIR),
 	.NENDSTOP(NENDSTOP),
@@ -252,9 +253,11 @@ stepper #(
 
 	.step(step),
 	.dir(dir),
-	.endstop(endstop),
+	.endstop_in(endstop),
 
-	.shutdown(shutdown)
+	.shutdown(shutdown),
+
+	.debug(stepper_debug)
 );
 
 tmcuart #(
@@ -552,6 +555,6 @@ assign debug[7:4] = msg_state_pre;
 assign debug[11:8] = msg_state_pre_pre;
 assign debug[19:12] = msg_cmd;
 assign debug[UNITS_BITS+19:20] = unit;
-assign debug[31:UNITS_BITS+20] = 0;
+assign debug[52:UNITS_BITS+20] = stepper_debug;
 
 endmodule
