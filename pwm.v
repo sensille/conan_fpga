@@ -24,7 +24,9 @@ module pwm #(
 
 	output reg [NPWM-1:0] pwm = 0,
 
-	input wire shutdown
+	input wire shutdown,
+
+	output reg missed_clock = 0
 );
 
 /*
@@ -129,6 +131,8 @@ always @(posedge clk) begin
 		state <= PS_IDLE;
 	end else if (state == PS_SCHEDULE_PWM_1) begin
 		next_time[channel] <= arg_data;
+		if (arg_data - systime >= 32'hc0000000)
+			missed_clock <= 1;
 		state <= PS_SCHEDULE_PWM_2;
 	end else if (state == PS_SCHEDULE_PWM_2) begin
 		next_on_ticks[channel] <= arg_data;

@@ -9,13 +9,15 @@ module system #(
 	parameter CMD_GET_TIME = 0,
 	parameter RSP_GET_TIME = 0,
 	parameter CMD_SHUTDOWN = 0,
+	parameter RSP_SHUTDOWN = 0,
 	parameter VERSION = 1,
 	parameter MOVE_COUNT = 0,
 	parameter NGPIO = 0,
 	parameter NPWM = 0,
 	parameter NSTEPDIR = 0,
 	parameter NENDSTOP = 0,
-	parameter NUART = 0
+	parameter NUART = 0,
+	parameter MISSED_BITS = 0
 ) (
 	input wire clk,
 	input wire [31:0] systime,
@@ -37,7 +39,8 @@ module system #(
 	output reg time_out_en,
 	input wire timesync_latch_in,
 
-	output reg shutdown = 0
+	output reg shutdown = 0,
+	input wire [MISSED_BITS-1:0] missed_clock
 );
 
 reg timesync_latch = 0;
@@ -54,7 +57,9 @@ localparam PS_GET_VERSION_3 = 3;
 localparam PS_SYNC_TIME_1 = 4;
 localparam PS_GET_TIME_1  = 5;
 localparam PS_GET_TIME_2  = 6;
-localparam PS_MAX = 6;
+localparam PS_WAIT_GRANT  = 7;
+localparam PS_SEND_SHUTDOWN_1  = 8;
+localparam PS_MAX = 8;
 localparam PS_BITS = $clog2(PS_MAX + 1);
 
 reg [63:0] latched_time = 0;
@@ -122,6 +127,20 @@ always @(posedge clk) begin
 		param_write <= 0;
 		param_data <= RSP_GET_TIME;
 		state <= PS_IDLE;
+	end else if (state == PS_IDLE && missed_clock) begin
+		invol_req <= 1;
+		state <= PS_WAIT_GRANT;
+	end else if (state == PS_WAIT_GRANT && invol_grant) begin
+		invol_req <= 0;
+		param_data <= missed_clock;	/* shutdown reason */
+		param_write <= 1;
+		state <= PS_SEND_SHUTDOWN_1;
+	end else if (state == PS_SEND_SHUTDOWN_1) begin
+		cmd_done <= 1;
+		param_write <= 0;
+		param_data <= RSP_SHUTDOWN;
+		state <= PS_IDLE;
+		shutdown <= 1;
 	end
 
 	// latch time on falling edge of timesync_latch

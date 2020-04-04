@@ -33,6 +33,7 @@
 #define RSP_STEPPER_GET_POS	2
 #define RSP_ENDSTOP_STATE	3
 #define RSP_TMCUART_READ	4
+#define RSP_SHUTDOWN		5
 
 #define HZ 48000000
 #define NUART 6

@@ -532,8 +532,8 @@ assign ldata[63:0] = systime;
 assign esp_rx = fpga1;		/* rx */
 assign esp_flash = fpga2;	/* tx */
 assign esp_tx = fpga5;		/* timesync */
-assign esp_gpio2 = cmd_debug[30];
-assign exp2_9 = step1;
-assign exp2_10 = dir1;
+assign esp_gpio2 = pwm11;
+assign exp2_9 = step6;
+assign exp2_10 = dir6;
 
 endmodule

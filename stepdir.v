@@ -25,7 +25,8 @@ module stepdir #(
 	output reg step = 0,
 	output reg dir = 0,
 
-	output reg [31:0] position = 0
+	output reg [31:0] position = 0,
+	output reg missed_clock = 0
 );
 
 localparam DATA_WIDTH = MOVE_TYPE_BITS + STEP_INTERVAL_BITS + STEP_COUNT_BITS + STEP_ADD_BITS + 1;
@@ -90,6 +91,9 @@ always @(posedge clk) begin
 		next_step <= next_step + q_interval;
 		next_dir <= q_dir;
 		queue_rd_en <= 1;
+		/* check if next_step + q_interval is behind sysclock. if so, set error flag */
+		if (next_step + q_interval - clock >= 32'hc0000000)
+			missed_clock <= 1;
 	end else if (count != 0 && clock == next_step) begin
 		count <= count - 1;
 		if (count != 1) begin

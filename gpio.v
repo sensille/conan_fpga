@@ -26,7 +26,9 @@ module gpio #(
 
 	output reg [NGPIO-1:0] gpio = { NGPIO { 1'b1 } },
 
-	input wire shutdown
+	input wire shutdown,
+
+	output reg missed_clock = 0
 );
 
 reg [31:0] next_time[NGPIO];
@@ -110,6 +112,8 @@ always @(posedge clk) begin
 		state <= PS_IDLE;
 	end else if (state == PS_SCHEDULE_GPIO_1) begin
 		next_time[channel] <= arg_data;
+		if (arg_data - systime >= 32'hc0000000)
+			missed_clock <= 1;
 		state <= PS_SCHEDULE_GPIO_2;
 	end else if (state == PS_SCHEDULE_GPIO_2) begin
 		next_value[channel] <= arg_data;

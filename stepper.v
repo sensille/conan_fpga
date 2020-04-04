@@ -31,11 +31,14 @@ module stepper #(
 	output reg invol_req = 0,
 	input wire invol_grant,
 
-	output reg [NSTEPDIR-1:0] step,
-	output reg [NSTEPDIR-1:0] dir,
+	output wire [NSTEPDIR-1:0] step,
+	output wire [NSTEPDIR-1:0] dir,
 	input wire [NENDSTOP-1:0] endstop_in,
 
 	input wire shutdown,
+
+	output wire step_missed_clock,
+	output reg endstop_missed_clock = 0,
 
 	output wire [28:0] debug
 );
@@ -85,6 +88,7 @@ wire [31:0] step_position[NSTEPDIR];
 reg [NSTEPDIR-1:0] dedge = 0;
 reg [31:0] reset_clock = 0;
 reg [NSTEPDIR-1:0] do_reset_clock = 0;
+wire [NSTEPDIR-1:0] g_step_missed_clock;
 
 genvar stepdir_gi;
 generate
@@ -109,10 +113,13 @@ generate
 			.clock(systime),
 			.step(step[stepdir_gi]),
 			.dir(dir[stepdir_gi]),
-			.position(step_position[stepdir_gi])
+			.position(step_position[stepdir_gi]),
+			.missed_clock(g_step_missed_clock[stepdir_gi])
 		);
 	end
 endgenerate
+
+assign step_missed_clock = g_step_missed_clock != 0;
 
 /*
  * endstops
@@ -124,6 +131,7 @@ reg [23:0] endstop_sample_count[NENDSTOP-1:0];
 reg [23:0] endstop_sample_cnt[NENDSTOP-1:0];
 reg endstop_pin_value[NENDSTOP];
 reg [NSTEPDIR-1:0] endstop_step_reset[NENDSTOP-1:0];
+reg [NSTEPDIR-1:0] need_reset = 0;
 reg [NENDSTOP-1:0] endstop_send_state = 0;
 localparam ES_IDLE = 0;
 localparam ES_WAIT_FOR_CLOCK = 1;
@@ -137,6 +145,11 @@ initial begin: init_endstop1
 	for (i = 0; i < NENDSTOP; i = i + 1) begin
 		endstop_stepper[i] = 0;
 		endstop_step_reset[i] = 0;
+		endstop_time[i] = 0;
+		endstop_sample_count[i] = 0;
+		endstop_sample_cnt[i] = 0;
+		endstop_pin_value[i] = 0;
+		endstop_state[i] = 0;
 	end
 end
 always @(*) begin: init_endstop2
@@ -196,6 +209,7 @@ reg [PS_BITS-1:0] state = PS_IDLE;
 reg temp_reg = 0;
 /* just keep asserted, we'll read one arg per clock */
 assign arg_advance = 1;
+reg _missed = 0;
 always @(posedge clk) begin: main
 	integer i;
 
@@ -203,6 +217,10 @@ always @(posedge clk) begin: main
 		cmd_done <= 0;
 	do_reset_clock <= 0;
 	step_queue_wr_en <= 0;
+
+	/* discard all moves to the next reset_step */
+	need_reset <= need_reset | step_reset;
+
 	if (state == PS_IDLE && cmd_ready) begin
 		// common to all cmds
 		channel <= arg_data[NSTEPDIR_BITS-1:0];
@@ -238,7 +256,8 @@ always @(posedge clk) begin: main
 		state <= PS_QUEUE_STEP_3;
 	end else if (state == PS_QUEUE_STEP_3) begin
 		q_add <= arg_data[STEP_ADD_BITS-1:0];
-		step_queue_wr_en[channel] <= 1;
+		if (!need_reset[channel] && !step_reset[channel])
+			step_queue_wr_en[channel] <= 1;
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_SET_NEXT_STEP_DIR_1) begin
@@ -249,6 +268,7 @@ always @(posedge clk) begin: main
 		/* one clock delay in stepdir */
 		reset_clock <= arg_data - 1;
 		do_reset_clock[channel] <= 1;
+		need_reset[channel] <= 0;
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_STEPPER_GET_POS_1) begin
@@ -286,6 +306,9 @@ always @(posedge clk) begin: main
 	end else if (state == PS_ENDSTOP_HOME_1) begin
 		/* <endstop-channel> <time> <sample_count> <pin_value> */
 		endstop_time[channel] <= arg_data;
+		_missed <= 0;
+		if (arg_data - systime >= 32'hc0000000)
+			_missed <= 1;
 		state <= PS_ENDSTOP_HOME_2;
 	end else if (state == PS_ENDSTOP_HOME_2) begin
 		endstop_sample_count[channel] <= arg_data;
@@ -298,6 +321,8 @@ always @(posedge clk) begin: main
 		end else begin
 			endstop_homing[channel] <= 1;
 			endstop_state[channel] <= ES_WAIT_FOR_CLOCK;
+			if (_missed)
+				endstop_missed_clock <= 1;
 		end
 		cmd_done <= 1;
 		state <= PS_IDLE;
@@ -358,5 +383,6 @@ assign debug[2] = endstop_pin_value[2];
 assign debug[3] = endstop[2];
 assign debug[5:4] = endstop_state[2];
 assign debug[6] = endstop[2];
+assign debug[7] = g_step_missed_clock != 0;
 
 endmodule

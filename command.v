@@ -109,6 +109,13 @@ localparam RSP_GET_TIME		= 1;
 localparam RSP_STEPPER_GET_POS	= 2;
 localparam RSP_ENDSTOP_STATE	= 3;
 localparam RSP_TMCUART_READ	= 4;
+localparam RSP_SHUTDOWN		= 5;
+
+localparam MISSED_STEPPER	= 0;
+localparam MISSED_ENDSTOP	= 1;
+localparam MISSED_PWM		= 2;
+localparam MISSED_GPIO		= 3;
+localparam MISSED_BITS		= 4;
 
 /* BAD HACK, should go away soon */
 localparam [ARGS_BITS-1:0] ARGS_0 = 0;
@@ -146,6 +153,7 @@ initial begin
 end
 
 wire shutdown; /* set by command, never cleared */
+wire [MISSED_BITS-1:0] missed_clock;
 
 reg [ARGS_BITS-1:0] unit_arg_ptr = 0;
 reg [31:0] unit_arg_data = 0;
@@ -179,7 +187,9 @@ pwm #(
 
 	.pwm(pwm),
 
-	.shutdown(shutdown)
+	.shutdown(shutdown),
+
+	.missed_clock(missed_clock[MISSED_PWM])
 );
 
 system #(
@@ -189,13 +199,15 @@ system #(
 	.CMD_GET_TIME(CMD_GET_TIME),
 	.RSP_GET_TIME(RSP_GET_TIME),
 	.CMD_SHUTDOWN(CMD_SHUTDOWN),
+	.RSP_SHUTDOWN(RSP_SHUTDOWN),
 	.VERSION(VERSION),
 	.MOVE_COUNT(MOVE_COUNT),
 	.NGPIO(NGPIO),
 	.NPWM(NPWM),
 	.NSTEPDIR(NSTEPDIR),
 	.NENDSTOP(NENDSTOP),
-	.NUART(NUART)
+	.NUART(NUART),
+	.MISSED_BITS(MISSED_BITS)
 ) u_system (
 	.clk(clk),
 	.systime(systime),
@@ -218,7 +230,8 @@ system #(
 	.time_out_en(time_out_en),
 	.timesync_latch_in(timesync_latch_in),
 
-	.shutdown(shutdown)
+	.shutdown(shutdown),
+	.missed_clock(missed_clock)
 );
 
 wire [28:0] stepper_debug;
@@ -256,6 +269,9 @@ stepper #(
 	.endstop_in(endstop),
 
 	.shutdown(shutdown),
+
+	.step_missed_clock(missed_clock[MISSED_STEPPER]),
+	.endstop_missed_clock(missed_clock[MISSED_ENDSTOP]),
 
 	.debug(stepper_debug)
 );
@@ -313,7 +329,9 @@ gpio #(
 
 	.gpio(gpio),
 
-	.shutdown(shutdown)
+	.shutdown(shutdown),
+
+	.missed_clock(missed_clock[MISSED_GPIO])
 );
 
 localparam MST_IDLE = 0;
@@ -344,11 +362,11 @@ reg cmd_has_response = 0;
 localparam MAX_PARAMS = 8;
 localparam PARAM_BITS = $clog2(MAX_PARAMS);
 reg [31:0] params [MAX_PARAMS];
-reg [PARAM_BITS-1:0] nparams;
-reg [PARAM_BITS-1:0] curr_param;
-reg [34:0] rcv_param;
-reg [2:0] curr_cnt;	/* counter for VLQ */
-reg [7:0] rsp_len;
+reg [PARAM_BITS-1:0] nparams = 0;
+reg [PARAM_BITS-1:0] curr_param = 0;
+reg [34:0] rcv_param = 0;
+reg [2:0] curr_cnt = 0;	/* counter for VLQ */
+reg [7:0] rsp_len = 0;
 reg string_arg = 0;
 /* assume max string is 64 */
 reg [5:0] str_pos = 0;
@@ -535,25 +553,28 @@ always @(posedge clk) begin
 				nparams <= 0;
 				curr_param <= 0;
 				cmd_has_response <= 1;
-				unit_invol_grant[unit] <= 1;
+				unit_invol_grant[i] <= 1;
 				msg_state <= MST_DISPATCH_WAIT_DONE;
+				i = NUNITS;
 			end
 		end
 	end
 end
 
-reg [3:0] msg_state_pre;
-reg [3:0] msg_state_pre_pre;
+reg [3:0] msg_state_pre = 0;
+reg [3:0] msg_state_pre_pre = 0;
+reg [3:0] msg_state_pre_pre_pre = 0;
 always @(posedge clk) begin
 	if (msg_state != msg_state_pre) begin
+		msg_state_pre_pre_pre <= msg_state_pre_pre;
 		msg_state_pre_pre <= msg_state_pre;
 		msg_state_pre <= msg_state;
 	end
 end
-assign debug[3:0] = msg_state;
-assign debug[7:4] = msg_state_pre;
-assign debug[11:8] = msg_state_pre_pre;
-assign debug[19:12] = msg_cmd;
+assign debug[3:0] = msg_state_pre;
+assign debug[7:4] = msg_state_pre_pre;
+assign debug[11:8] = msg_state_pre_pre_pre;
+assign debug[16:12] = msg_cmd;
 assign debug[UNITS_BITS+19:20] = unit;
 assign debug[52:UNITS_BITS+20] = stepper_debug;
 
