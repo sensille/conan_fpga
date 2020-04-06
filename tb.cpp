@@ -1220,9 +1220,9 @@ test_stepper(sim_t *sp)
 	tb->endstop2 = 1;
 	start = sp->cycle;
 	uart_send_vlq_and_wait(sp, 3, CMD_RESET_STEP_CLOCK, 0, start);
-	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 100000, 1, 0);
+	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 150000, 1, 0);
 	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 1000, 100, 0);
-	start += 100000;
+	start += 150000;
 	printf("schedule start for %d (homing abort)\n", start);
 	uart_send_vlq_and_wait(sp, 5, CMD_ENDSTOP_HOME, 1, start, 10, 0);
 
@@ -1268,6 +1268,14 @@ test_stepper(sim_t *sp)
 	for (i = 0; i < 2000; ++i)
 		if (tb->step1 != 0)
 			fail("stepper moved after finish\n");
+
+	start = sp->cycle;
+	uart_send_vlq_and_wait(sp, 3, CMD_RESET_STEP_CLOCK, 0, start);
+	/* send a command in the past */
+	uart_send_vlq_and_wait(sp, 5, CMD_QUEUE_STEP, 0, 1000, 1, 0);
+	wait_for_uart_vlq(sp, 3, rsp);
+	if (rsp[0] != RSP_SHUTDOWN || rsp[1] != 1)
+		fail("failed to shutdown\n");
 
 	watch_clear(sp->wp);
 }
@@ -1616,9 +1624,10 @@ test(sim_t *sp)
 	test_time(sp);	/* always needed as time sync */
 	test_version(sp);
 	test_pwm(sp);
-	test_stepper(sp);
 	test_tmcuart(sp);
 	test_gpio(sp);
+	/* must be last, as it ends with a shutdown */
+	test_stepper(sp);
 
 	printf("test succeeded after %d cycles\n", sp->cycle);
 

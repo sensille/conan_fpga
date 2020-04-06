@@ -185,7 +185,7 @@ module conan #(
  *          -> 12MHz stepper driver clock
  */
 localparam HZ = 48000000;
-wire clk; 
+wire clk;
 `ifdef VERILATOR
 assign clk = clk_48mhz;
 reg _drclk = 0;
@@ -265,6 +265,7 @@ framing #(
 );
 
 wire [52:0] cmd_debug;
+wire [15:0] step_debug;
 
 /*
  * on-board LEDs
@@ -289,6 +290,7 @@ wire [NUART-1:0] uart_out;
 wire [NUART-1:0] uart_en;
 
 wire [NGPIO-1:0] gpio;
+reg req_shutdown = 0;
 
 command #(
 	.HZ(HZ),
@@ -339,7 +341,9 @@ command #(
 	.time_out_en(systime_set_en),
 	.timesync_latch_in(fpga5),
 
-	.debug(cmd_debug)
+	.req_shutdown(req_shutdown),
+	.debug(cmd_debug),
+	.step_debug(step_debug)
 );
 
 `ifdef VERILATOR
@@ -524,7 +528,42 @@ assign ldata[126] = clk_50mhz;
 assign ldata[125:117] = gpio;
 assign ldata[116:64] = cmd_debug;
 
-assign ldata[63:0] = systime;
+assign ldata[31:0] = systime[43:12];
+
+/* step watcher */
+wire [5:0] d_step = { step6, step5, step4, step3, step2, step1 };
+reg [5:0] prev_d_step = 0;
+reg [5:0] d_alert = 0;
+reg [31:0] d_idle[6];
+reg armed = 0;
+integer i;
+initial
+	for (i = 0; i < 6; i = i + 1)
+		d_idle[i] = 0;
+
+always @(posedge clk) begin
+	for (i = 0; i < 6; i = i + 1) begin
+		d_alert[i] <= 0;
+		if (d_idle[i] != HZ * 10) begin
+			d_idle[i] <= d_idle[i] + 1;
+		end else begin
+			d_alert[i] <= 1;
+			if (i == 5 && armed)
+				req_shutdown <= 1;
+		end
+		if (prev_d_step[i] != d_step[i]) begin
+			d_idle[i] <= 0;
+		end
+	end
+	prev_d_step <= d_step;
+	if (endstop5 == 0)
+		armed <= 1;
+end
+assign ldata[37:32] = d_alert;
+assign ldata[38] = armed;
+assign ldata[39] = 0;
+assign ldata[47:40] = d_idle[5][31:24];
+assign ldata[63:48] = step_debug;
 
 /*
  * direct output for scope debugging

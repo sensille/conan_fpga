@@ -54,11 +54,13 @@ module command #(
 	output wire [63:0] time_out,
 	output wire time_out_en,
 	input wire timesync_latch_in,
+	input wire req_shutdown,
 
 	/*
 	 * debug
 	 */
-	output wire [52:0] debug
+	output wire [52:0] debug,
+	output wire [15:0] step_debug
 );
 
 /*
@@ -115,7 +117,8 @@ localparam MISSED_STEPPER	= 0;
 localparam MISSED_ENDSTOP	= 1;
 localparam MISSED_PWM		= 2;
 localparam MISSED_GPIO		= 3;
-localparam MISSED_BITS		= 4;
+localparam MISSED_REQ_SHUTDOWN	= 4;
+localparam MISSED_BITS		= 5;
 
 /* BAD HACK, should go away soon */
 localparam [ARGS_BITS-1:0] ARGS_0 = 0;
@@ -154,6 +157,7 @@ end
 
 wire shutdown; /* set by command, never cleared */
 wire [MISSED_BITS-1:0] missed_clock;
+assign missed_clock[MISSED_REQ_SHUTDOWN] = req_shutdown;
 
 reg [ARGS_BITS-1:0] unit_arg_ptr = 0;
 reg [31:0] unit_arg_data = 0;
@@ -192,6 +196,7 @@ pwm #(
 	.missed_clock(missed_clock[MISSED_PWM])
 );
 
+wire [$clog2(NSTEPDIR):0] step_queue_overflow;
 system #(
 	.CMD_GET_VERSION(CMD_GET_VERSION),
 	.RSP_GET_VERSION(RSP_GET_VERSION),
@@ -231,7 +236,8 @@ system #(
 	.timesync_latch_in(timesync_latch_in),
 
 	.shutdown(shutdown),
-	.missed_clock(missed_clock)
+	.missed_clock(missed_clock),
+	.step_queue_overflow(step_queue_overflow)
 );
 
 wire [28:0] stepper_debug;
@@ -272,8 +278,10 @@ stepper #(
 
 	.step_missed_clock(missed_clock[MISSED_STEPPER]),
 	.endstop_missed_clock(missed_clock[MISSED_ENDSTOP]),
+	.queue_overflow(step_queue_overflow),
 
-	.debug(stepper_debug)
+	.debug(stepper_debug),
+	.step_debug(step_debug)
 );
 
 tmcuart #(

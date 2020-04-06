@@ -38,9 +38,11 @@ module stepper #(
 	input wire shutdown,
 
 	output wire step_missed_clock,
+	output reg [$clog2(NSTEPDIR):0] queue_overflow = 0,
 	output reg endstop_missed_clock = 0,
 
-	output wire [28:0] debug
+	output wire [28:0] debug,
+	output wire [15:0] step_debug
 );
 
 /*
@@ -81,7 +83,6 @@ localparam STEP_DATA_WIDTH = MOVE_TYPE_BITS + STEP_INTERVAL_BITS + STEP_COUNT_BI
 wire [STEP_DATA_WIDTH-1:0] step_queue_wr_data;
 reg [NSTEPDIR-1:0] step_queue_wr_en = 0;
 wire [NSTEPDIR-1:0] step_queue_empty;
-wire [NSTEPDIR-1:0] step_running;
 reg [NSTEPDIR-1:0] step_next_dir = 0;
 reg [NSTEPDIR-1:0] step_reset = 0;
 wire [31:0] step_position[NSTEPDIR];
@@ -89,6 +90,8 @@ reg [NSTEPDIR-1:0] dedge = 0;
 reg [31:0] reset_clock = 0;
 reg [NSTEPDIR-1:0] do_reset_clock = 0;
 wire [NSTEPDIR-1:0] g_step_missed_clock;
+wire [NSTEPDIR-1:0] step_queue_full;
+wire [15:0] g_step_debug [NSTEPDIR];
 
 genvar stepdir_gi;
 generate
@@ -105,7 +108,6 @@ generate
 			.queue_wr_data(step_queue_wr_data),
 			.queue_wr_en(step_queue_wr_en[stepdir_gi]),
 			.queue_empty(step_queue_empty[stepdir_gi]),
-			.running(step_running[stepdir_gi]),
 			.reset(step_reset[stepdir_gi]),
 			.dedge(dedge[stepdir_gi]),
 			.do_reset_clock(do_reset_clock[stepdir_gi]),
@@ -114,7 +116,9 @@ generate
 			.step(step[stepdir_gi]),
 			.dir(dir[stepdir_gi]),
 			.position(step_position[stepdir_gi]),
-			.missed_clock(g_step_missed_clock[stepdir_gi])
+			.missed_clock(g_step_missed_clock[stepdir_gi]),
+			.queue_full(step_queue_full[stepdir_gi]),
+			.debug(g_step_debug[stepdir_gi])
 		);
 	end
 endgenerate
@@ -258,6 +262,8 @@ always @(posedge clk) begin: main
 		q_add <= arg_data[STEP_ADD_BITS-1:0];
 		if (!need_reset[channel] && !step_reset[channel])
 			step_queue_wr_en[channel] <= 1;
+		if (step_queue_full[channel])
+			queue_overflow <= { channel, 1'b1 };
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_SET_NEXT_STEP_DIR_1) begin
@@ -384,5 +390,6 @@ assign debug[3] = endstop[2];
 assign debug[5:4] = endstop_state[2];
 assign debug[6] = endstop[2];
 assign debug[7] = g_step_missed_clock != 0;
+assign step_debug = g_step_debug[5];
 
 endmodule

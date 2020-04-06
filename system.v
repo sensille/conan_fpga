@@ -40,7 +40,8 @@ module system #(
 	input wire timesync_latch_in,
 
 	output reg shutdown = 0,
-	input wire [MISSED_BITS-1:0] missed_clock
+	input wire [MISSED_BITS-1:0] missed_clock,
+	input wire [$clog2(NSTEPDIR):0] step_queue_overflow
 );
 
 reg timesync_latch = 0;
@@ -59,7 +60,8 @@ localparam PS_GET_TIME_1  = 5;
 localparam PS_GET_TIME_2  = 6;
 localparam PS_WAIT_GRANT  = 7;
 localparam PS_SEND_SHUTDOWN_1  = 8;
-localparam PS_MAX = 8;
+localparam PS_SEND_SHUTDOWN_2  = 9;
+localparam PS_MAX = 9;
 localparam PS_BITS = $clog2(PS_MAX + 1);
 
 reg [63:0] latched_time = 0;
@@ -127,15 +129,18 @@ always @(posedge clk) begin
 		param_write <= 0;
 		param_data <= RSP_GET_TIME;
 		state <= PS_IDLE;
-	end else if (state == PS_IDLE && missed_clock) begin
+	end else if (state == PS_IDLE && (missed_clock | step_queue_overflow)) begin
 		invol_req <= 1;
 		state <= PS_WAIT_GRANT;
 	end else if (state == PS_WAIT_GRANT && invol_grant) begin
 		invol_req <= 0;
-		param_data <= missed_clock;	/* shutdown reason */
+		param_data <= { step_queue_overflow, missed_clock };	/* shutdown reason */
 		param_write <= 1;
 		state <= PS_SEND_SHUTDOWN_1;
 	end else if (state == PS_SEND_SHUTDOWN_1) begin
+		param_data <= systime;
+		state <= PS_SEND_SHUTDOWN_2;
+	end else if (state == PS_SEND_SHUTDOWN_2) begin
 		cmd_done <= 1;
 		param_write <= 0;
 		param_data <= RSP_SHUTDOWN;

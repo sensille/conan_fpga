@@ -13,7 +13,6 @@ module stepdir #(
 	input wire [MOVE_TYPE_BITS + STEP_INTERVAL_BITS + STEP_COUNT_BITS + STEP_ADD_BITS + 1 - 1:0] queue_wr_data,
 	input wire queue_wr_en,
 	output wire queue_empty,
-	output reg running = 0,
 
 	input wire dedge,
 
@@ -26,7 +25,10 @@ module stepdir #(
 	output reg dir = 0,
 
 	output reg [31:0] position = 0,
-	output reg missed_clock = 0
+	output reg missed_clock = 0,
+	output wire queue_full,
+
+	output wire [15:0] debug
 );
 
 localparam DATA_WIDTH = MOVE_TYPE_BITS + STEP_INTERVAL_BITS + STEP_COUNT_BITS + STEP_ADD_BITS + 1;
@@ -35,6 +37,7 @@ localparam MOVE_ADDR_BITS = $clog2(MOVE_COUNT);
 wire [DATA_WIDTH-1:0] queue_rd_data;
 reg queue_rd_en = 0;
 
+wire [MOVE_ADDR_BITS-1:0] elemcnt;
 fifo #(
 	.DATA_WIDTH(DATA_WIDTH),
 	.ADDR_WIDTH(MOVE_ADDR_BITS)
@@ -43,11 +46,11 @@ fifo #(
 	.clr(reset),
 	.din(queue_wr_data),
 	.wr_en(queue_wr_en),
-	.full(),
+	.full(queue_full),
 	.dout(queue_rd_data),
 	.rd_en(queue_rd_en),
 	.empty(queue_empty),
-	.elemcnt()
+	.elemcnt(elemcnt)
 );
 
 /*
@@ -84,7 +87,6 @@ always @(posedge clk) begin
 		 * currently this condition is only here to make use of all bits
 		 * of the fifo. Otherwise yosys won't infer a block ram for it
 		 */
-		running <= 1;
 		count <= q_count;
 		add <= q_add;
 		interval <= q_interval;
@@ -107,7 +109,6 @@ always @(posedge clk) begin
 			next_dir <= q_dir;
 			queue_rd_en <= 1;
 		end else begin
-			running <= 0;
 		end
 		if (dedge)
 			step <= !step;
@@ -132,7 +133,6 @@ always @(posedge clk) begin
 	end
 
 	if (reset) begin
-		running <= 0;
 		count <= 0;
 		/*
 		 * because queue_empty is delayed by one slot, we also need
@@ -143,5 +143,8 @@ always @(posedge clk) begin
 	if (delayed_reset)
 		delayed_reset <= 0;
 end
+
+assign debug[8:0] = elemcnt;
+assign debug[15:9] = next_step[31:25];
 
 endmodule
