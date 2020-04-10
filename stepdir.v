@@ -3,11 +3,11 @@
 
 module stepdir #(
 	parameter MOVE_TYPE_KLIPPER = 3'b000,
-	parameter MOVE_TYPE_BITS = 3,
-	parameter STEP_INTERVAL_BITS = 32,
-	parameter STEP_COUNT_BITS = 32,
-	parameter STEP_ADD_BITS = 32,
-	parameter MOVE_COUNT = 512
+	parameter MOVE_TYPE_BITS = 0,
+	parameter STEP_INTERVAL_BITS = 0,
+	parameter STEP_COUNT_BITS = 0,
+	parameter STEP_ADD_BITS = 0,
+	parameter MOVE_COUNT = 0
 ) (
 	input wire clk,
 	input wire [MOVE_TYPE_BITS + STEP_INTERVAL_BITS + STEP_COUNT_BITS + STEP_ADD_BITS + 1 - 1:0] queue_wr_data,
@@ -25,9 +25,11 @@ module stepdir #(
 	output reg dir = 0,
 
 	output reg [31:0] position = 0,
+	output wire [31:0] next_step_time,
 	output reg missed_clock = 0,
 	output wire queue_full,
 
+	output wire [$clog2(MOVE_COUNT)-1:0] elemcnt,
 	output wire [15:0] debug
 );
 
@@ -37,7 +39,6 @@ localparam MOVE_ADDR_BITS = $clog2(MOVE_COUNT);
 wire [DATA_WIDTH-1:0] queue_rd_data;
 reg queue_rd_en = 0;
 
-wire [MOVE_ADDR_BITS-1:0] elemcnt;
 fifo #(
 	.DATA_WIDTH(DATA_WIDTH),
 	.ADDR_WIDTH(MOVE_ADDR_BITS)
@@ -72,9 +73,11 @@ reg [STEP_INTERVAL_BITS-1:0] interval = 0;
 reg [STEP_COUNT_BITS-1:0] count = 0;
 reg [STEP_ADD_BITS-1:0] add = 0;
 wire [STEP_INTERVAL_BITS-1:0] signed_add = { {(STEP_INTERVAL_BITS - STEP_ADD_BITS) { add[STEP_ADD_BITS-1] }}, add };
+wire [STEP_INTERVAL_BITS-1:0] signed_q_add = { {(STEP_INTERVAL_BITS - STEP_ADD_BITS) { q_add[STEP_ADD_BITS-1] }}, q_add };
 reg [31:0] next_step = 0;
 reg next_dir = 0;
 reg delayed_reset = 0;
+assign next_step_time = next_step;
 
 reg [2:0] step_delay = 0;
 
@@ -108,7 +111,6 @@ always @(posedge clk) begin
 			next_step <= next_step + q_interval;
 			next_dir <= q_dir;
 			queue_rd_en <= 1;
-		end else begin
 		end
 		if (dedge)
 			step <= !step;

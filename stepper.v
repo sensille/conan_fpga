@@ -3,18 +3,21 @@
 
 module stepper #(
 	parameter NSTEPDIR = 6,
-	parameter NENDSTOP = 8,
-	parameter CMD_BITS = 8,
+	parameter NENDSTOP = 0,
+	parameter CMD_BITS = 0,
 	parameter CMD_CONFIG_STEPPER = 0,
 	parameter CMD_QUEUE_STEP = 0,
 	parameter CMD_SET_NEXT_STEP_DIR = 0,
 	parameter CMD_RESET_STEP_CLOCK = 0,
 	parameter CMD_STEPPER_GET_POS = 0,
+	parameter CMD_STEPPER_GET_NEXT = 0,
 	parameter CMD_ENDSTOP_SET_STEPPER = 0,
 	parameter CMD_ENDSTOP_QUERY = 0,
 	parameter CMD_ENDSTOP_HOME = 0,
 	parameter RSP_STEPPER_GET_POS = 0,
-	parameter RSP_ENDSTOP_STATE = 0
+	parameter RSP_STEPPER_GET_NEXT = 0,
+	parameter RSP_ENDSTOP_STATE = 0,
+	parameter MOVE_COUNT = 0
 ) (
 	input wire clk,
 	input wire [31:0] systime,
@@ -78,7 +81,6 @@ localparam MOVE_TYPE_BITS = 3;
 localparam STEP_INTERVAL_BITS = 32;
 localparam STEP_COUNT_BITS = 32;
 localparam STEP_ADD_BITS = 32;
-localparam MOVE_COUNT = 512;
 localparam STEP_DATA_WIDTH = MOVE_TYPE_BITS + STEP_INTERVAL_BITS + STEP_COUNT_BITS + STEP_ADD_BITS + 1;
 wire [STEP_DATA_WIDTH-1:0] step_queue_wr_data;
 reg [NSTEPDIR-1:0] step_queue_wr_en = 0;
@@ -86,12 +88,14 @@ wire [NSTEPDIR-1:0] step_queue_empty;
 reg [NSTEPDIR-1:0] step_next_dir = 0;
 reg [NSTEPDIR-1:0] step_reset = 0;
 wire [31:0] step_position[NSTEPDIR];
+wire [31:0] step_next_step_time[NSTEPDIR];
 reg [NSTEPDIR-1:0] dedge = 0;
 reg [31:0] reset_clock = 0;
 reg [NSTEPDIR-1:0] do_reset_clock = 0;
 wire [NSTEPDIR-1:0] g_step_missed_clock;
 wire [NSTEPDIR-1:0] step_queue_full;
 wire [15:0] g_step_debug [NSTEPDIR];
+wire [$clog2(MOVE_COUNT)-1:0] g_elemcnt[NSTEPDIR];
 
 genvar stepdir_gi;
 generate
@@ -116,8 +120,10 @@ generate
 			.step(step[stepdir_gi]),
 			.dir(dir[stepdir_gi]),
 			.position(step_position[stepdir_gi]),
+			.next_step_time(step_next_step_time[stepdir_gi]),
 			.missed_clock(g_step_missed_clock[stepdir_gi]),
 			.queue_full(step_queue_full[stepdir_gi]),
+			.elemcnt(g_elemcnt[stepdir_gi]),
 			.debug(g_step_debug[stepdir_gi])
 		);
 	end
@@ -204,7 +210,12 @@ localparam PS_ENDSTOP_HOME_1		= 15;
 localparam PS_ENDSTOP_HOME_2		= 16;
 localparam PS_ENDSTOP_HOME_3		= 17;
 localparam PS_WAIT_GRANT		= 18;
-localparam PS_MAX			= 18;
+localparam PS_STEPPER_GET_NEXT_1	= 19;
+localparam PS_STEPPER_GET_NEXT_2	= 20;
+localparam PS_STEPPER_GET_NEXT_3	= 21;
+localparam PS_STEPPER_GET_NEXT_4	= 22;
+localparam PS_STEPPER_GET_NEXT_5	= 23;
+localparam PS_MAX			= 23;
 
 localparam PS_BITS = $clog2(PS_MAX + 1);
 localparam NENDSTOP_BITS = $clog2(NENDSTOP);
@@ -238,6 +249,8 @@ always @(posedge clk) begin: main
 			state <= PS_RESET_STEP_CLOCK_1;
 		end else if (cmd == CMD_STEPPER_GET_POS) begin
 			state <= PS_STEPPER_GET_POS_1;
+		end else if (cmd == CMD_STEPPER_GET_NEXT) begin
+			state <= PS_STEPPER_GET_NEXT_1;
 		end else if (cmd == CMD_ENDSTOP_SET_STEPPER) begin
 			state <= PS_ENDSTOP_SET_STEPPER_1;
 		end else if (cmd == CMD_ENDSTOP_QUERY) begin
@@ -288,6 +301,24 @@ always @(posedge clk) begin: main
 		cmd_done <= 1;
 		param_write <= 0;
 		param_data <= RSP_STEPPER_GET_POS;
+		state <= PS_IDLE;
+	end else if (state == PS_STEPPER_GET_NEXT_1) begin
+		param_data <= channel;
+		param_write <= 1;
+		state <= PS_STEPPER_GET_NEXT_2;
+	end else if (state == PS_STEPPER_GET_NEXT_2) begin
+		param_data <= step_next_step_time[channel];
+		state <= PS_STEPPER_GET_NEXT_3;
+	end else if (state == PS_STEPPER_GET_NEXT_3) begin
+		param_data <= g_elemcnt[channel];
+		state <= PS_STEPPER_GET_NEXT_4;
+	end else if (state == PS_STEPPER_GET_NEXT_4) begin
+		param_data <= systime;
+		state <= PS_STEPPER_GET_NEXT_5;
+	end else if (state == PS_STEPPER_GET_NEXT_5) begin
+		cmd_done <= 1;
+		param_write <= 0;
+		param_data <= RSP_STEPPER_GET_NEXT;
 		state <= PS_IDLE;
 	end else if (state == PS_ENDSTOP_SET_STEPPER_1) begin
 		/* <endstop-channel> <stepper-channel> */

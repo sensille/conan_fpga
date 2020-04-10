@@ -2,16 +2,15 @@
 `default_nettype none
 
 module command #(
-	parameter HZ = 48000000,
-	parameter RING_BITS = 8,
-	parameter LEN_BITS = 8,
-	parameter LEN_FIFO_BITS = 7,
-	parameter MOVE_COUNT = 512,
-	parameter NGPIO = 9,
-	parameter NPWM = 12,
+	parameter HZ = 0,
+	parameter LEN_BITS = 0,
+	parameter LEN_FIFO_BITS = 0,
+	parameter MOVE_COUNT = 0,
+	parameter NGPIO = 0,
+	parameter NPWM = 0,
 	parameter NSTEPDIR = 6,
-	parameter NENDSTOP = 8,
-	parameter NUART = 6,
+	parameter NENDSTOP = 0,
+	parameter NUART = 0,
 	parameter VERSION = 0
 ) (
 	input wire clk,
@@ -103,7 +102,8 @@ localparam CMD_CONFIG_DIGITAL_OUT	= 16;
 localparam CMD_SCHEDULE_DIGITAL_OUT	= 17;
 localparam CMD_UPDATE_DIGITAL_OUT	= 18;
 localparam CMD_SHUTDOWN			= 19;
-localparam NCMDS			= 20;
+localparam CMD_STEPPER_GET_NEXT		= 20;
+localparam NCMDS			= 21;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
@@ -112,6 +112,7 @@ localparam RSP_STEPPER_GET_POS	= 2;
 localparam RSP_ENDSTOP_STATE	= 3;
 localparam RSP_TMCUART_READ	= 4;
 localparam RSP_SHUTDOWN		= 5;
+localparam RSP_STEPPER_GET_NEXT	= 6;
 
 localparam MISSED_STEPPER	= 0;
 localparam MISSED_ENDSTOP	= 1;
@@ -153,6 +154,7 @@ initial begin
 	cmdtab[CMD_SCHEDULE_DIGITAL_OUT] = { UNIT_GPIO, ARGS_3, 1'b0, 1'b0 };
 	cmdtab[CMD_UPDATE_DIGITAL_OUT] = { UNIT_GPIO, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_SHUTDOWN] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b0 };
+	cmdtab[CMD_STEPPER_GET_NEXT] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b1 };
 end
 
 wire shutdown; /* set by command, never cleared */
@@ -244,16 +246,20 @@ wire [28:0] stepper_debug;
 stepper #(
 	.NSTEPDIR(NSTEPDIR),
 	.NENDSTOP(NENDSTOP),
+	.MOVE_COUNT(MOVE_COUNT),
+	.CMD_BITS(CMD_BITS),
 	.CMD_CONFIG_STEPPER(CMD_CONFIG_STEPPER),
 	.CMD_QUEUE_STEP(CMD_QUEUE_STEP),
 	.CMD_SET_NEXT_STEP_DIR(CMD_SET_NEXT_STEP_DIR),
 	.CMD_RESET_STEP_CLOCK(CMD_RESET_STEP_CLOCK),
 	.CMD_STEPPER_GET_POS(CMD_STEPPER_GET_POS),
+	.CMD_STEPPER_GET_NEXT(CMD_STEPPER_GET_NEXT),
 	.CMD_ENDSTOP_SET_STEPPER(CMD_ENDSTOP_SET_STEPPER),
 	.CMD_ENDSTOP_QUERY(CMD_ENDSTOP_QUERY),
 	.CMD_ENDSTOP_HOME(CMD_ENDSTOP_HOME),
 	.RSP_STEPPER_GET_POS(RSP_STEPPER_GET_POS),
-	.RSP_ENDSTOP_STATE(RSP_ENDSTOP_STATE)
+	.RSP_ENDSTOP_STATE(RSP_ENDSTOP_STATE),
+	.RSP_STEPPER_GET_NEXT(RSP_STEPPER_GET_NEXT)
 ) u_stepper (
 	.clk(clk),
 	.systime(systime),

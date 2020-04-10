@@ -5,7 +5,7 @@ module conan #(
 	parameter BAUD = 250000,
 	parameter LEN_BITS = 6,
 	parameter LEN_FIFO_BITS = 5,
-	parameter MOVE_COUNT = 512,
+	parameter MOVE_COUNT = 1024,
 	parameter NGPIO = 9,
 	parameter NPWM = 12,
 	parameter NSTEPDIR = 6,
@@ -218,7 +218,7 @@ wire msg_rd_en;
 /* max length of a packet MCU -> host */
 /* address width of fifo */
 /* size of receive ring (2^x) */
-localparam RING_BITS = 8;
+localparam RING_BITS = 9;
 wire [LEN_BITS-1:0] send_fifo_data;
 wire send_fifo_wr_en;
 wire [7:0] send_ring_data;

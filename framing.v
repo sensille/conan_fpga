@@ -2,11 +2,11 @@
 `default_nettype none
 
 module framing #(
-	parameter BAUD = 9600,
-	parameter RING_BITS = 8,
-	parameter LEN_BITS = 8,
-	parameter LEN_FIFO_BITS = 7,
-	parameter HZ = 20000000
+	parameter BAUD = 0,
+	parameter RING_BITS = 0,
+	parameter LEN_BITS = 0,
+	parameter LEN_FIFO_BITS = 0,
+	parameter HZ = 0
 ) (
 	input wire clk,
 

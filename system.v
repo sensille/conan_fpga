@@ -129,7 +129,7 @@ always @(posedge clk) begin
 		param_write <= 0;
 		param_data <= RSP_GET_TIME;
 		state <= PS_IDLE;
-	end else if (state == PS_IDLE && (missed_clock | step_queue_overflow)) begin
+	end else if (state == PS_IDLE && (missed_clock | step_queue_overflow) && !shutdown) begin
 		invol_req <= 1;
 		state <= PS_WAIT_GRANT;
 	end else if (state == PS_WAIT_GRANT && invol_grant) begin
