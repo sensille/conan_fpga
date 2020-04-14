@@ -27,6 +27,8 @@
 #define CMD_SCHEDULE_DIGITAL_OUT 17
 #define CMD_UPDATE_DIGITAL_OUT	18
 #define CMD_SHUTDOWN		19
+#define CMD_STEPPER_GET_NEXT	20
+#define CMD_CONFIG_DRO		21
 
 #define RSP_GET_VERSION		0
 #define RSP_GET_TIME		1
@@ -34,6 +36,8 @@
 #define RSP_ENDSTOP_STATE	3
 #define RSP_TMCUART_READ	4
 #define RSP_SHUTDOWN		5
+#define RSP_STEPPER_GET_NEXT	6
+#define RSP_DRO_DATA		7
 
 #define HZ 48000000
 #define NUART 6
@@ -684,9 +688,9 @@ uart_recv_tick(uart_recv_t *urp, int *want_dump)
 		urp->buf[urp->pos++] = urp->byte;
 printf("received (%s) 0x%02x\n", urp->name, urp->byte);
 	}
-		
+
 	*want_dump = 1;
-		
+
 	return urp->bit == 0;
 }
 
@@ -1030,7 +1034,7 @@ _check_stepdir(sim_t *sp, int interval, int count, int add, int dir, int *step, 
 			++dircnt;
 			yield(sp);
 		}
-		
+
 		if (step)
 			*step = !*step;
 		if (pos)
@@ -1195,7 +1199,7 @@ test_stepper(sim_t *sp)
 	delay(sp, 5000);
 	if (tb->step1 != !step1)
 		fail("step reset by homing\n");
-	
+
 	wait_for_uart_vlq(sp, 4, rsp);
 	if (rsp[0] != RSP_ENDSTOP_STATE)
 		fail("received incorrect rsp to ENDSTOP_QUERY\n");
@@ -1230,7 +1234,7 @@ test_stepper(sim_t *sp)
 	delay(sp, start - sp->cycle);
 	/* abort homing */
 	uart_send_vlq_and_wait(sp, 5, CMD_ENDSTOP_HOME, 1, 0, 0, 0);
-	
+
 	uart_send_vlq(sp, 2, CMD_ENDSTOP_QUERY, 1);
 	wait_for_uart_vlq(sp, 4, rsp);
 	if (rsp[0] != RSP_ENDSTOP_STATE || rsp[1] != 1 || rsp[2] != 0 || rsp[3] != 1)
@@ -1556,8 +1560,6 @@ tmcuart_init(sim_t *sp, vluint8_t *in, vluint8_t *out, vluint8_t *en, int mask)
 static void
 test_gpio(sim_t *sp)
 {
-	uart_send_t *usp = sp->usp;
-	uart_recv_t *urp = sp->urp;
 	Vconan *tb = sp->tb;
 	int i;
 
@@ -1616,6 +1618,91 @@ test_gpio(sim_t *sp)
 		fail("digital out now reset by duration\n");
 }
 
+static uint32_t
+dro_send(sim_t *sp, uint32_t val, int bits, uint32_t idle)
+{
+	Vconan *tb = sp->tb;
+	int setuptime = idle / 40;
+	int bittime = idle / 20;
+	int i;
+	uint32_t starttime = 0;
+
+	/* discard unused upper bits */
+	val <<= 32 - bits;
+
+	tb->chain_out_out2 = 1;	/* clk */
+	tb->chain_out_out1 = 1; /* do */
+
+	delay(sp, idle);
+
+	for (i = 0; i < bits; ++i) {
+		tb->chain_out_out1 = !!(val & (1 << 31));
+		delay(sp, setuptime);
+		tb->chain_out_out2 = 0;
+		if (starttime == 0)
+			starttime = sp->cycle;
+		delay(sp, bittime);
+		tb->chain_out_out2 = 1;
+		delay(sp, bittime);
+		val <<= 1;
+	}
+
+	delay(sp, idle);
+
+	return starttime + HZ / 1000000 + 4;
+}
+
+static void
+test_dro(sim_t *sp)
+{
+	Vconan *tb = sp->tb;
+	int i;
+	uint32_t rsp[5];
+	uint32_t starttime;
+	uint32_t idle = HZ / 1000; /* 1ms */
+
+	tb->chain_out_out2 = 1;	/* clk */
+
+	watch_add(sp->wp, "u_dro.state", "state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_dro.dr_state", "dr_state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_dro.dclk", "dclk", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_dro.ddo", "ddo", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "chain_out_out2", "dclk_in", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "chain_out_out1", "ddo_in", NULL, FORM_DEC, WF_ALL);
+
+	uart_send_vlq_and_wait(sp, 3, CMD_CONFIG_DRO, 0, idle);
+
+	starttime = dro_send(sp, 0x000000, 24, idle);
+
+	wait_for_uart_vlq(sp, 5, rsp);
+	if (rsp[0] != RSP_DRO_DATA)
+		fail("read dro data\n");
+	if (rsp[1] != 0)
+		fail("dro data bad channel %d\n", rsp[1]);
+	if (rsp[2] != starttime)
+		fail("dro data bad starttime %d != %d\n", rsp[2], starttime);
+	if (rsp[3] != 0x000000)
+		fail("dro data bad data %x\n", rsp[3]);
+	if (rsp[4] != 24)
+		fail("dro data bad bits %x\n", rsp[4]);
+
+	starttime = dro_send(sp, 0x349876, 24, idle);
+
+	wait_for_uart_vlq(sp, 5, rsp);
+	if (rsp[0] != RSP_DRO_DATA)
+		fail("read dro data\n");
+	if (rsp[1] != 0)
+		fail("dro data bad channel %d\n", rsp[1]);
+	if (rsp[2] != starttime)
+		fail("dro data bad starttime %d != %d\n", rsp[2], starttime);
+	if (rsp[3] != 0x349876)
+		fail("dro data bad data %x\n", rsp[3]);
+	if (rsp[4] != 24)
+		fail("dro data bad bits %x\n", rsp[4]);
+
+	uart_send_vlq_and_wait(sp, 3, CMD_CONFIG_DRO, 0, 0);
+}
+
 static void
 test(sim_t *sp)
 {
@@ -1626,6 +1713,7 @@ test(sim_t *sp)
 	test_pwm(sp);
 	test_tmcuart(sp);
 	test_gpio(sp);
+	test_dro(sp);
 	/* must be last, as it ends with a shutdown */
 	test_stepper(sp);
 

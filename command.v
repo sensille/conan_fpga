@@ -11,6 +11,7 @@ module command #(
 	parameter NSTEPDIR = 6,
 	parameter NENDSTOP = 0,
 	parameter NUART = 0,
+	parameter NDRO = 0,
 	parameter VERSION = 0
 ) (
 	input wire clk,
@@ -49,6 +50,9 @@ module command #(
 	output wire [NUART-1:0] uart_out,
 	output wire [NUART-1:0] uart_en,
 
+	input wire [NDRO-1:0] dro_clk,
+	input wire [NDRO-1:0] dro_do,
+
 	input wire [63:0] time_in,
 	output wire [63:0] time_out,
 	output wire time_out_en,
@@ -79,7 +83,8 @@ localparam UNIT_SYSTEM		= 4'd1;
 localparam UNIT_STEPPER		= 4'd2;
 localparam UNIT_TMCUART		= 4'd3;
 localparam UNIT_GPIO		= 4'd4;
-localparam NUNITS		= 4'd5;
+localparam UNIT_DRO		= 4'd5;
+localparam NUNITS		= 4'd6;
 
 localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 1;
 localparam CMD_GET_VERSION		= 0;
@@ -103,7 +108,8 @@ localparam CMD_SCHEDULE_DIGITAL_OUT	= 17;
 localparam CMD_UPDATE_DIGITAL_OUT	= 18;
 localparam CMD_SHUTDOWN			= 19;
 localparam CMD_STEPPER_GET_NEXT		= 20;
-localparam NCMDS			= 21;
+localparam CMD_CONFIG_DRO		= 21;
+localparam NCMDS			= 22;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
@@ -113,6 +119,7 @@ localparam RSP_ENDSTOP_STATE	= 3;
 localparam RSP_TMCUART_READ	= 4;
 localparam RSP_SHUTDOWN		= 5;
 localparam RSP_STEPPER_GET_NEXT	= 6;
+localparam RSP_DRO_DATA		= 7;
 
 localparam MISSED_STEPPER	= 0;
 localparam MISSED_ENDSTOP	= 1;
@@ -155,6 +162,7 @@ initial begin
 	cmdtab[CMD_UPDATE_DIGITAL_OUT] = { UNIT_GPIO, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_SHUTDOWN] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b0 };
 	cmdtab[CMD_STEPPER_GET_NEXT] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b1 };
+	cmdtab[CMD_CONFIG_DRO] = { UNIT_DRO, ARGS_2, 1'b0, 1'b0 };
 end
 
 wire shutdown; /* set by command, never cleared */
@@ -214,6 +222,7 @@ system #(
 	.NSTEPDIR(NSTEPDIR),
 	.NENDSTOP(NENDSTOP),
 	.NUART(NUART),
+	.NDRO(NDRO),
 	.MISSED_BITS(MISSED_BITS)
 ) u_system (
 	.clk(clk),
@@ -346,6 +355,36 @@ gpio #(
 	.shutdown(shutdown),
 
 	.missed_clock(missed_clock[MISSED_GPIO])
+);
+
+wire [15:0] dro_debug;
+dro #(
+	.HZ(HZ),
+	.NDRO(NDRO),
+	.CMD_CONFIG_DRO(CMD_CONFIG_DRO),
+	.RSP_DRO_DATA(RSP_DRO_DATA)
+) u_dro (
+	.clk(clk),
+	.systime(systime),
+
+	.arg_data(unit_arg_data),
+	.arg_advance(unit_arg_advance[UNIT_DRO]),
+	.cmd(unit_cmd),
+	.cmd_ready(unit_cmd_ready[UNIT_DRO]),
+	.cmd_done(unit_cmd_done[UNIT_DRO]),
+
+	.param_data(unit_param_data[UNIT_DRO]),
+	.param_write(unit_param_write[UNIT_DRO]),
+
+	.invol_req(unit_invol_req[UNIT_DRO]),
+	.invol_grant(unit_invol_grant[UNIT_DRO]),
+
+	.dro_clk(dro_clk),
+	.dro_do(dro_do),
+
+	.debug(dro_debug),
+
+	.shutdown(shutdown)
 );
 
 localparam MST_IDLE = 0;
@@ -590,6 +629,8 @@ assign debug[7:4] = msg_state_pre_pre;
 assign debug[11:8] = msg_state_pre_pre_pre;
 assign debug[16:12] = msg_cmd;
 assign debug[UNITS_BITS+19:20] = unit;
-assign debug[52:UNITS_BITS+20] = stepper_debug;
+assign debug[31:UNITS_BITS+20] = stepper_debug;
+assign debug[47:32] = dro_debug;
+assign debug[52:48] = 0;
 
 endmodule

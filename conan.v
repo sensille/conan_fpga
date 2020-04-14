@@ -11,6 +11,7 @@ module conan #(
 	parameter NSTEPDIR = 6,
 	parameter NENDSTOP = 8,
 	parameter NUART = 6,
+	parameter NDRO = 2,
 	parameter VERSION = 66
 ) (
 	input wire clk_50mhz,
@@ -290,6 +291,10 @@ wire [NUART-1:0] uart_out;
 wire [NUART-1:0] uart_en;
 
 wire [NGPIO-1:0] gpio;
+
+wire [NDRO-1:0] dro_clk;
+wire [NDRO-1:0] dro_do;
+
 reg req_shutdown = 0;
 
 command #(
@@ -302,6 +307,7 @@ command #(
 	.NSTEPDIR(NSTEPDIR),
 	.NENDSTOP(NENDSTOP),
 	.NUART(NUART),
+	.NDRO(NDRO),
 	.VERSION(VERSION)
 ) u_command (
 	.clk(clk),
@@ -336,6 +342,9 @@ command #(
 	.uart_out(uart_out),
 	.uart_en(uart_en),
 
+	.dro_clk(dro_clk),
+	.dro_do(dro_do),
+
 	.time_in(systime),
 	.time_out(systime_set),
 	.time_out_en(systime_set_en),
@@ -358,6 +367,8 @@ assign uart4 = uart_en[3] ? uart_out[3] : 1'bz;
 assign uart5 = uart_en[4] ? uart_out[4] : 1'bz;
 assign uart6 = uart_en[5] ? uart_out[5] : 1'bz;
 
+assign dro_do = { chain_out_out3, chain_out_out1 };
+assign dro_clk = { chain_out_in1, chain_out_out2 };
 /*
  * Stepper driver
  */
