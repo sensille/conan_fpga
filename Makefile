@@ -12,7 +12,7 @@ $(TARGET).json: $(SRC) $(TARGET).lpf Makefile
 	yosys -q -p "synth_ecp5 -json $(TARGET).json" $(SRC)
 
 %_out.config: %.json $(TARGET).lpf
-	nextpnr-ecp5 -q --json $< --textcfg $@ --45k --package CABGA256 --lpf $(TARGET).lpf
+	nextpnr-ecp5 -q -l nextpnr.log --json $< --textcfg $@ --45k --package CABGA256 --lpf $(TARGET).lpf
 
 %.bit: %_out.config
 #	ecppack --idcode 0x21111043 --svf-rowsize 100000 --svf $(TARGET).svf $< $@
