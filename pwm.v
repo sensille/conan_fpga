@@ -131,7 +131,8 @@ always @(posedge clk) begin
 		state <= PS_IDLE;
 	end else if (state == PS_SCHEDULE_PWM_1) begin
 		next_time[channel] <= arg_data;
-		if (arg_data - systime >= 32'hc0000000)
+		if (arg_data - systime >= 32'hc0000000 ||
+		    arg_data - systime == 32'h00000000)
 			missed_clock <= 1;
 		state <= PS_SCHEDULE_PWM_2;
 	end else if (state == PS_SCHEDULE_PWM_2) begin
