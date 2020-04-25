@@ -168,7 +168,7 @@ module conan #(
 	output wire pwm11,
 	output wire pwm12,
 
-	output reg wdi,
+	output wire wdi,
 	output wire wden,
 
 	input wire fpga1,
@@ -311,7 +311,7 @@ command #(
 	.VERSION(VERSION)
 ) u_command (
 	.clk(clk),
-	.systime(systime),
+	.systime(systime[31:0]),
 
 	/*
 	 * receive side

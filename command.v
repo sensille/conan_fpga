@@ -36,7 +36,7 @@ module command #(
 	input wire send_ring_full,
 
 	/* global time */
-	input wire [63:0] systime,
+	input wire [31:0] systime,
 
 	/*
 	 * I/O
@@ -181,6 +181,7 @@ wire [NUNITS-1:0] unit_invol_req;
 reg [NUNITS-1:0] unit_invol_grant = 0;
 pwm #(
 	.NPWM(NPWM),
+	.CMD_BITS(CMD_BITS),
 	.CMD_CONFIG_PWM(CMD_CONFIG_PWM),
 	.CMD_SCHEDULE_PWM(CMD_SCHEDULE_PWM)
 ) u_pwm (
@@ -223,7 +224,8 @@ system #(
 	.NENDSTOP(NENDSTOP),
 	.NUART(NUART),
 	.NDRO(NDRO),
-	.MISSED_BITS(MISSED_BITS)
+	.MISSED_BITS(MISSED_BITS),
+	.CMD_BITS(CMD_BITS)
 ) u_system (
 	.clk(clk),
 	.systime(systime),
@@ -304,7 +306,8 @@ tmcuart #(
 	.NUART(NUART),
 	.CMD_TMCUART_WRITE(CMD_TMCUART_WRITE),
 	.CMD_TMCUART_READ(CMD_TMCUART_READ),
-	.RSP_TMCUART_READ(RSP_TMCUART_READ)
+	.RSP_TMCUART_READ(RSP_TMCUART_READ),
+	.CMD_BITS(CMD_BITS)
 ) u_tmcuart (
 	.clk(clk),
 	.systime(systime),
@@ -333,7 +336,8 @@ gpio #(
 	.CMD_SET_DIGITAL_OUT(CMD_SET_DIGITAL_OUT),
 	.CMD_CONFIG_DIGITAL_OUT(CMD_CONFIG_DIGITAL_OUT),
 	.CMD_SCHEDULE_DIGITAL_OUT(CMD_SCHEDULE_DIGITAL_OUT),
-	.CMD_UPDATE_DIGITAL_OUT(CMD_UPDATE_DIGITAL_OUT)
+	.CMD_UPDATE_DIGITAL_OUT(CMD_UPDATE_DIGITAL_OUT),
+	.CMD_BITS(CMD_BITS)
 ) u_gpio (
 	.clk(clk),
 	.systime(systime),
@@ -362,7 +366,8 @@ dro #(
 	.HZ(HZ),
 	.NDRO(NDRO),
 	.CMD_CONFIG_DRO(CMD_CONFIG_DRO),
-	.RSP_DRO_DATA(RSP_DRO_DATA)
+	.RSP_DRO_DATA(RSP_DRO_DATA),
+	.CMD_BITS(CMD_BITS)
 ) u_dro (
 	.clk(clk),
 	.systime(systime),
@@ -628,8 +633,9 @@ assign debug[3:0] = msg_state_pre;
 assign debug[7:4] = msg_state_pre_pre;
 assign debug[11:8] = msg_state_pre_pre_pre;
 assign debug[16:12] = msg_cmd;
-assign debug[UNITS_BITS+19:20] = unit;
-assign debug[31:UNITS_BITS+20] = stepper_debug;
+assign debug[19:17] = 0;
+assign debug[23:20] = unit;
+assign debug[31:24] = stepper_debug;
 assign debug[47:32] = dro_debug;
 assign debug[52:48] = 0;
 

@@ -2,18 +2,18 @@
 `default_nettype none
 
 module tmcuart #(
-	parameter HZ = 48000000,
-	parameter CMD_BITS = 8,
-	parameter NUART = 6,
-	parameter CMD_TMCUART_WRITE = 1,
-	parameter CMD_TMCUART_READ = 2,
-	parameter RSP_TMCUART_READ = 3
+	parameter HZ = 0,
+	parameter CMD_BITS = 0,
+	parameter NUART = 0,
+	parameter CMD_TMCUART_WRITE = 0,
+	parameter CMD_TMCUART_READ = 0,
+	parameter RSP_TMCUART_READ = 0
 ) (
 	input wire clk,
 	input wire [31:0] systime,
 
 	input wire [31:0] arg_data,
-	output reg arg_advance = 0,
+	output wire arg_advance,
 	input wire [CMD_BITS-1:0] cmd,
 	input wire cmd_ready,
 	output reg cmd_done = 0,
@@ -25,9 +25,8 @@ module tmcuart #(
 	input wire invol_grant,
 
 	input wire [NUART-1:0] uart_in,
-	//output reg [NUART-1:0] uart_out = { NUART { 1'b1 } },
-	output wire [NUART-1:0] uart_out,
-	output reg [NUART-1:0] uart_en = { NUART { 1'b1 } },
+	output reg [NUART-1:0] uart_out,
+	output reg [NUART-1:0] uart_en,
 
 	input wire shutdown	/* not used */
 );

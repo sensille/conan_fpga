@@ -9,8 +9,8 @@
  * with one clock delay.
  */
 module fifo #(
-	parameter DATA_WIDTH = 72,
-	parameter ADDR_WIDTH = 9
+	parameter DATA_WIDTH = 0,
+	parameter ADDR_WIDTH = 0
 ) (
 	input wire clk,
 	input wire clr,

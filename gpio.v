@@ -2,18 +2,18 @@
 `default_nettype none
 
 module gpio #(
-	parameter NGPIO = 9,
-	parameter CMD_BITS = 8,
-	parameter CMD_SET_DIGITAL_OUT = 1,
-	parameter CMD_CONFIG_DIGITAL_OUT = 2,
-	parameter CMD_SCHEDULE_DIGITAL_OUT = 3,
-	parameter CMD_UPDATE_DIGITAL_OUT = 4
+	parameter NGPIO = 0,
+	parameter CMD_BITS = 0,
+	parameter CMD_SET_DIGITAL_OUT = 0,
+	parameter CMD_CONFIG_DIGITAL_OUT = 0,
+	parameter CMD_SCHEDULE_DIGITAL_OUT = 0,
+	parameter CMD_UPDATE_DIGITAL_OUT = 0
 ) (
 	input wire clk,
 	input wire [31:0] systime,
 
 	input wire [31:0] arg_data,
-	output reg arg_advance = 0,
+	output wire arg_advance,
 	input wire [CMD_BITS-1:0] cmd,
 	input wire cmd_ready,
 	output reg cmd_done = 0,

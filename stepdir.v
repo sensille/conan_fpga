@@ -73,7 +73,6 @@ reg [STEP_INTERVAL_BITS-1:0] interval = 0;
 reg [STEP_COUNT_BITS-1:0] count = 0;
 reg [STEP_ADD_BITS-1:0] add = 0;
 wire [STEP_INTERVAL_BITS-1:0] signed_add = { {(STEP_INTERVAL_BITS - STEP_ADD_BITS) { add[STEP_ADD_BITS-1] }}, add };
-wire [STEP_INTERVAL_BITS-1:0] signed_q_add = { {(STEP_INTERVAL_BITS - STEP_ADD_BITS) { q_add[STEP_ADD_BITS-1] }}, q_add };
 reg [31:0] next_step = 0;
 reg next_dir = 0;
 reg delayed_reset = 0;

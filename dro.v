@@ -2,17 +2,17 @@
 `default_nettype none
 
 module dro #(
-	parameter HZ = 48000000,
-	parameter CMD_BITS = 8,
-	parameter NDRO = 6,
-	parameter CMD_CONFIG_DRO = 1,
-	parameter RSP_DRO_DATA = 3
+	parameter HZ = 0,
+	parameter CMD_BITS = 0,
+	parameter NDRO = 0,
+	parameter CMD_CONFIG_DRO = 0,
+	parameter RSP_DRO_DATA = 0
 ) (
 	input wire clk,
 	input wire [31:0] systime,
 
 	input wire [31:0] arg_data,
-	output reg arg_advance = 0,
+	output wire arg_advance,
 	input wire [CMD_BITS-1:0] cmd,
 	input wire cmd_ready,
 	output reg cmd_done = 0,
@@ -245,5 +245,6 @@ assign debug[2] = dr_state[0];
 assign debug[4:3] = dr_state[0];
 assign debug[7:5] = state;
 assign debug[8] = data[0][7:0];
+assign debug[15:9] = 0;
 
 endmodule

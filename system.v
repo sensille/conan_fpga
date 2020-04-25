@@ -2,7 +2,7 @@
 `default_nettype none
 
 module system #(
-	parameter CMD_BITS = 8,
+	parameter CMD_BITS = 0,
 	parameter CMD_GET_VERSION = 0,
 	parameter RSP_GET_VERSION = 0,
 	parameter CMD_SYNC_TIME = 0,
@@ -10,7 +10,7 @@ module system #(
 	parameter RSP_GET_TIME = 0,
 	parameter CMD_SHUTDOWN = 0,
 	parameter RSP_SHUTDOWN = 0,
-	parameter VERSION = 1,
+	parameter VERSION = 0,
 	parameter MOVE_COUNT = 0,
 	parameter NGPIO = 0,
 	parameter NPWM = 0,
@@ -24,7 +24,7 @@ module system #(
 	input wire [31:0] systime,
 
 	input wire [31:0] arg_data,
-	output reg arg_advance = 0,
+	output wire arg_advance,
 	input wire [CMD_BITS-1:0] cmd,
 	input wire cmd_ready,
 	output reg cmd_done = 0,

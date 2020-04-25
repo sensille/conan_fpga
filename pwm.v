@@ -2,16 +2,16 @@
 `default_nettype none
 
 module pwm #(
-	parameter NPWM = 12,
-	parameter CMD_BITS = 8,
-	parameter CMD_CONFIG_PWM = 2,
-	parameter CMD_SCHEDULE_PWM = 3
+	parameter NPWM = 0,
+	parameter CMD_BITS = 0,
+	parameter CMD_CONFIG_PWM = 0,
+	parameter CMD_SCHEDULE_PWM = 0
 ) (
 	input wire clk,
 	input wire [31:0] systime,
 
 	input wire [31:0] arg_data,
-	output reg arg_advance = 0,
+	output wire arg_advance,
 	input wire [CMD_BITS-1:0] cmd,
 	input wire cmd_ready,
 	output reg cmd_done = 0,
