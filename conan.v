@@ -12,6 +12,7 @@ module conan #(
 	parameter NENDSTOP = 8,
 	parameter NUART = 6,
 	parameter NDRO = 2,
+	parameter NAS5311 = 3,
 	parameter VERSION = 66
 ) (
 	input wire clk_50mhz,
@@ -53,14 +54,14 @@ module conan #(
 	input wire exp1_11,
 	input wire exp1_10,
 	input wire exp1_9,
-	input wire exp1_8,
-	input wire exp1_7,
+	output wire exp1_8,
+	output wire exp1_7,
 	input wire exp1_6,
-	input wire exp1_5,
-	input wire exp1_4,
+	output wire exp1_5,
+	output wire exp1_4,
 	input wire exp1_3,
-	input wire exp1_2,
-	input wire exp1_1,
+	output wire exp1_2,
+	output wire exp1_1,
 
 	input wire pmod1_1,
 	input wire pmod1_2,
@@ -295,6 +296,10 @@ wire [NGPIO-1:0] gpio;
 wire [NDRO-1:0] dro_clk;
 wire [NDRO-1:0] dro_do;
 
+wire [NAS5311-1:0] as5311_clk;
+wire [NAS5311-1:0] as5311_cs;
+wire [NAS5311-1:0] as5311_do;
+
 reg req_shutdown = 0;
 
 command #(
@@ -308,6 +313,7 @@ command #(
 	.NENDSTOP(NENDSTOP),
 	.NUART(NUART),
 	.NDRO(NDRO),
+	.NAS5311(NAS5311),
 	.VERSION(VERSION)
 ) u_command (
 	.clk(clk),
@@ -345,6 +351,10 @@ command #(
 	.dro_clk(dro_clk),
 	.dro_do(dro_do),
 
+	.as5311_clk(as5311_clk),
+	.as5311_cs(as5311_cs),
+	.as5311_do(as5311_do),
+
 	.time_in(systime),
 	.time_out(systime_set),
 	.time_out_en(systime_set_en),
@@ -369,6 +379,16 @@ assign uart6 = uart_en[5] ? uart_out[5] : 1'bz;
 
 assign dro_do = { chain_out_out3, chain_out_out1 };
 assign dro_clk = { chain_out_in1, chain_out_out2 };
+
+assign exp1_1 = as5311_clk[0];
+assign exp1_2 = as5311_cs[0];
+assign as5311_do[0] = exp1_3;
+assign exp1_4 = as5311_clk[1];
+assign exp1_5 = as5311_cs[1];
+assign as5311_do[1] = exp1_6;
+assign exp1_7 = as5311_clk[2];
+assign exp1_8 = as5311_cs[2];
+assign as5311_do[2] = exp1_9;
 /*
  * Stepper driver
  */

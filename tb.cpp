@@ -29,6 +29,7 @@
 #define CMD_SHUTDOWN		19
 #define CMD_STEPPER_GET_NEXT	20
 #define CMD_CONFIG_DRO		21
+#define CMD_CONFIG_AS5311	22
 
 #define RSP_GET_VERSION		0
 #define RSP_GET_TIME		1
@@ -38,6 +39,7 @@
 #define RSP_SHUTDOWN		5
 #define RSP_STEPPER_GET_NEXT	6
 #define RSP_DRO_DATA		7
+#define RSP_AS5311_DATA		8
 
 #define HZ 48000000
 #define NUART 6
@@ -126,10 +128,29 @@ typedef struct {
 #define IOIN	2
 #define IFCNT	1
 
+#define AS_IDLE		0
+#define AS_CLK_HI	1
+#define AS_CLK_LO	2
+#define AS_WAIT_CS	3
+
+#define NAS5311		3
+
+typedef struct {
+	int		state;
+	uint32_t	data;
+	int		cnt;
+	uint16_t	magnet;
+	uint16_t	sensor;
+	vluint8_t	*cs;
+	vluint8_t	*clk;
+	vluint8_t	*dout;
+} as5311_t;
+
 typedef struct {
 	Vconan		*tb;
 	uart_recv_t	*urp;
 	uart_send_t	*usp;
+	as5311_t	*as5311[NAS5311];
 	uint64_t	last_change;
 	watch_t		*wp;
 	uint64_t	cycle;
@@ -142,6 +163,7 @@ typedef struct {
 } sim_t;
 
 static void tmcuart_tick(sim_t *sp);
+static void as5311_tick(sim_t *sp);
 static void wait_for_uart_send(sim_t *sp);
 static void fail(const char *msg, ...);
 
@@ -781,6 +803,7 @@ step(sim_t *sp, uint64_t cycle)
 	uart_send_tick(sp->usp, &want_dump);
 	timer_tick(sp);
 	tmcuart_tick(sp);
+	as5311_tick(sp);
 
 	/* watch output before test, so we might see failure reasons */
 	do_watch(sp->wp, cycle);
@@ -1701,6 +1724,119 @@ test_dro(sim_t *sp)
 		fail("dro data bad bits %x\n", rsp[4]);
 
 	uart_send_vlq_and_wait(sp, 3, CMD_CONFIG_DRO, 0, 0);
+
+	watch_clear(sp->wp);
+}
+
+static void
+as5311_tick(sim_t *sp)
+{
+	int i;
+	as5311_t *as;
+
+	for (i = 0; i < NAS5311; ++i) {
+		as = sp->as5311[i];
+
+		if (as == NULL)
+			continue;
+
+		if (as->state == AS_IDLE && *as->cs == 0) {
+			if (*as->clk == 0) {
+				/* magnet data */
+				as->data = (as->magnet++ << 6) | 0x25;
+				as->state = AS_CLK_LO;
+			} else {
+				/* sensor data */
+				as->data = (as->sensor++ << 6) | 0x25;
+				as->state = AS_CLK_HI;
+			}
+			as->cnt = 18;
+		} else if (as->state == AS_CLK_HI && *as->clk == 0) {
+			as->state = AS_CLK_LO;
+		} else if (as->state == AS_CLK_LO && *as->clk == 1) {
+			*as->dout = (as->data >> 17) & 1;
+			as->data <<= 1;
+			if (--as->cnt == 0)
+				as->state = AS_WAIT_CS;
+			else
+				as->state = AS_CLK_HI;
+		} else if (as->state == AS_WAIT_CS && *as->cs == 1) {
+			as->state = AS_IDLE;
+		} else if (as->state != AS_IDLE && *as->cs == 1) {
+			fail("as5311 bad timing at cnt=%d\n", as->cnt);
+		}
+	}
+}
+
+static void
+test_as5311(sim_t *sp)
+{
+	Vconan *tb = sp->tb;
+	int i;
+	uint32_t rsp[5];
+	int vm = 0x321;
+	int vs = 0x811;
+	as5311_t as = { 0 };
+
+	as.magnet = vm;
+	as.sensor = vs;
+	as.clk = &tb->exp1_1;
+	as.cs = &tb->exp1_2;
+	as.dout = &tb->exp1_3;
+
+	sp->as5311[0] = &as;
+
+	watch_add(sp->wp, "exp1_1$", "clk", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "exp1_2$", "cs", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "exp1_3$", "dout", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "as_state", "as_state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_as5311.data$", "data", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_as5311.data_valid", "valid", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_as5311.state", "state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_command.msg_state$", "msg_state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_as5311.data_pending", "d_pend", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_as5311.mag_pending", "m_pend", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_as5311.next_data", "n_data", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_as5311.next_mag", "n_mag", NULL, FORM_DEC, WF_ALL);
+
+	/* channel, divider, data interval, mag interval */
+	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_AS5311, 0, 10, 100000, 300000);
+
+	/* rsp: RSP_AS5311_DATA, channel, starttime, data, type (1=data, 0=mag) */
+	for (i = 0; i < 5; ++i) {
+		wait_for_uart_vlq(sp, 5, rsp);
+
+		if (rsp[0] != RSP_AS5311_DATA)
+			fail("read as5311 data\n");
+
+		printf("channel %d starttime %d data %x/%x type %d\n",
+			rsp[1], rsp[2], rsp[3] >> 6, rsp[3] & 0x3f, rsp[4]);
+
+		switch (i) {
+		case 0:
+		case 1:
+		case 2:
+		case 4:
+			if (rsp[4] != 1)
+				fail("as5311 bad type\n");
+			if ((rsp[3] >> 6) != vs++)
+				fail("as5311 bad sensor data\n");
+			break;
+		case 3:
+			if (rsp[4] != 0)
+				fail("as5311 bad type\n");
+			if ((rsp[3] >> 6) != vm++)
+				fail("as5311 bad magnet data\n");
+			break;
+		}
+		if ((rsp[3] & 0x3f) != 0x25)
+			fail("as5311 bad status data\n");
+	}
+
+	/* disable: channel, divider, data interval, mag interval */
+	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_AS5311, 0, 0, 0, 0);
+
+	sp->as5311[0] = NULL;
 }
 
 static void
@@ -1714,6 +1850,7 @@ test(sim_t *sp)
 	test_tmcuart(sp);
 	test_gpio(sp);
 	test_dro(sp);
+	test_as5311(sp);
 	/* must be last, as it ends with a shutdown */
 	test_stepper(sp);
 

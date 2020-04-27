@@ -12,6 +12,7 @@ module command #(
 	parameter NENDSTOP = 0,
 	parameter NUART = 0,
 	parameter NDRO = 0,
+	parameter NAS5311 = 0,
 	parameter VERSION = 0
 ) (
 	input wire clk,
@@ -53,6 +54,10 @@ module command #(
 	input wire [NDRO-1:0] dro_clk,
 	input wire [NDRO-1:0] dro_do,
 
+	output wire [NAS5311-1:0] as5311_clk,
+	output wire [NAS5311-1:0] as5311_cs,
+	input wire [NAS5311-1:0] as5311_do,
+
 	input wire [63:0] time_in,
 	output wire [63:0] time_out,
 	output wire time_out_en,
@@ -84,7 +89,8 @@ localparam UNIT_STEPPER		= 4'd2;
 localparam UNIT_TMCUART		= 4'd3;
 localparam UNIT_GPIO		= 4'd4;
 localparam UNIT_DRO		= 4'd5;
-localparam NUNITS		= 4'd6;
+localparam UNIT_AS5311		= 4'd6;
+localparam NUNITS		= 4'd7;
 
 localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 1;
 localparam CMD_GET_VERSION		= 0;
@@ -109,7 +115,8 @@ localparam CMD_UPDATE_DIGITAL_OUT	= 18;
 localparam CMD_SHUTDOWN			= 19;
 localparam CMD_STEPPER_GET_NEXT		= 20;
 localparam CMD_CONFIG_DRO		= 21;
-localparam NCMDS			= 22;
+localparam CMD_CONFIG_AS5311		= 22;
+localparam NCMDS			= 23;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
@@ -120,6 +127,7 @@ localparam RSP_TMCUART_READ	= 4;
 localparam RSP_SHUTDOWN		= 5;
 localparam RSP_STEPPER_GET_NEXT	= 6;
 localparam RSP_DRO_DATA		= 7;
+localparam RSP_AS5311_DATA	= 8;
 
 localparam MISSED_STEPPER	= 0;
 localparam MISSED_ENDSTOP	= 1;
@@ -163,6 +171,7 @@ initial begin
 	cmdtab[CMD_SHUTDOWN] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b0 };
 	cmdtab[CMD_STEPPER_GET_NEXT] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b1 };
 	cmdtab[CMD_CONFIG_DRO] = { UNIT_DRO, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_CONFIG_AS5311] = { UNIT_AS5311, ARGS_4, 1'b0, 1'b0 };
 end
 
 wire shutdown; /* set by command, never cleared */
@@ -224,6 +233,7 @@ system #(
 	.NENDSTOP(NENDSTOP),
 	.NUART(NUART),
 	.NDRO(NDRO),
+	.NAS5311(NAS5311),
 	.MISSED_BITS(MISSED_BITS),
 	.CMD_BITS(CMD_BITS)
 ) u_system (
@@ -388,6 +398,38 @@ dro #(
 	.dro_do(dro_do),
 
 	.debug(dro_debug),
+
+	.shutdown(shutdown)
+);
+
+wire [15:0] as5311_debug;
+as5311 #(
+	.HZ(HZ),
+	.NAS5311(NAS5311),
+	.CMD_CONFIG_AS5311(CMD_CONFIG_AS5311),
+	.RSP_AS5311_DATA(RSP_AS5311_DATA),
+	.CMD_BITS(CMD_BITS)
+) u_as5311 (
+	.clk(clk),
+	.systime(systime),
+
+	.arg_data(unit_arg_data),
+	.arg_advance(unit_arg_advance[UNIT_AS5311]),
+	.cmd(unit_cmd),
+	.cmd_ready(unit_cmd_ready[UNIT_AS5311]),
+	.cmd_done(unit_cmd_done[UNIT_AS5311]),
+
+	.param_data(unit_param_data[UNIT_AS5311]),
+	.param_write(unit_param_write[UNIT_AS5311]),
+
+	.invol_req(unit_invol_req[UNIT_AS5311]),
+	.invol_grant(unit_invol_grant[UNIT_AS5311]),
+
+	.as5311_clk(as5311_clk),
+	.as5311_cs(as5311_cs),
+	.as5311_do(as5311_do),
+
+	.debug(as5311_debug),
 
 	.shutdown(shutdown)
 );
@@ -636,7 +678,7 @@ assign debug[16:12] = msg_cmd;
 assign debug[19:17] = 0;
 assign debug[23:20] = unit;
 assign debug[31:24] = stepper_debug;
-assign debug[47:32] = dro_debug;
-assign debug[52:48] = 0;
+assign debug[47:32] = as5311_debug;
+assign debug[52:48] = dro_debug;
 
 endmodule

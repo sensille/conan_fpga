@@ -18,6 +18,7 @@ module system #(
 	parameter NENDSTOP = 0,
 	parameter NUART = 0,
 	parameter NDRO = 0,
+	parameter NAS5311 = 0,
 	parameter MISSED_BITS = 0
 ) (
 	input wire clk,
@@ -104,7 +105,8 @@ always @(posedge clk) begin
 		state <= PS_GET_VERSION_2;
 	end else if (state == PS_GET_VERSION_2) begin
 		param_data[31:24] <= NUART;
-		param_data[23:16] <= NDRO;
+		param_data[23:20] <= NAS5311;
+		param_data[19:16] <= NDRO;
 		param_data[15:0] <= MOVE_COUNT;
 		state <= PS_GET_VERSION_3;
 	end else if (state == PS_GET_VERSION_3) begin
