@@ -78,9 +78,9 @@ uart #(
 );
 
 reg [7:0] recv_ring [RING_SIZE-1:0];
-reg [RING_BITS-1:0] recv_temp_wptr = 0;
-reg [RING_BITS-1:0] recv_wptr = 0;
-reg [RING_BITS-1:0] recv_rptr = 0;
+reg [RING_BITS-1:0] recv_temp_wptr;
+reg [RING_BITS-1:0] recv_wptr;
+reg [RING_BITS-1:0] recv_rptr;
 assign msg_data = recv_ring[recv_rptr];
 assign msg_ready = recv_rptr != recv_wptr;
 
@@ -101,7 +101,8 @@ localparam RST_CRC1 = 3'd3;	/* read crc1 */
 localparam RST_CRC2 = 3'd4;	/* read crc2 */
 localparam RST_EOF = 3'd5;	/* read sync byte (end of frame) */
 localparam RST_ERROR = 3'd6;	/* error state, set clr signal to get out */
-reg [2:0] recv_state = RST_SOF;
+localparam RST_INIT = 3'd7;	/* startup */
+reg [2:0] recv_state = RST_INIT;
 
 assign cts = (recv_rptr != recv_temp_wptr + 1'b1);
 
@@ -109,7 +110,12 @@ assign cts = (recv_rptr != recv_temp_wptr + 1'b1);
  * packet receive state machine
  */
 always @(posedge clk) begin
-	if (rx_ready) begin
+	if (recv_state == RST_INIT) begin
+		recv_state <= RST_SOF;
+		recv_rptr <= 0;
+		recv_wptr <= 0;
+		recv_temp_wptr <= 0;
+	end else if (rx_ready) begin
 		if (recv_state == RST_SOF) begin 
 			if (rx_data == RECV_EOF_CHAR) begin
 				/*
@@ -226,8 +232,8 @@ fifo #(
 );
 
 reg [7:0] send_ring [RING_SIZE-1:0];
-reg [RING_BITS-1:0] send_rptr = 0;
-reg [RING_BITS-1:0] send_wptr = 0;
+reg [RING_BITS-1:0] send_rptr;
+reg [RING_BITS-1:0] send_wptr;
 assign send_ring_full = (send_wptr + 1'b1) == send_rptr;
 
 always @(posedge clk) begin
@@ -251,13 +257,18 @@ localparam SST_DATA = 3'd3;	/* read data */
 localparam SST_CRC1 = 3'd4;	/* read crc1 */
 localparam SST_CRC2 = 3'd5;	/* read crc2 */
 localparam SST_EOF = 3'd6;	/* read sync byte (end of frame) */
-reg [2:0] send_state = SST_IDLE;
+localparam SST_INIT = 3'd7;	/* read sync byte (end of frame) */
+reg [2:0] send_state = SST_INIT;
 
 /*
  * send state machine
  */
 always @(posedge clk) begin
-	if (!tx_transmitting && !tx_en) begin
+	if (send_state == SST_INIT) begin
+		send_state <= SST_IDLE;
+		send_rptr <= 0;
+		send_wptr <= 0;
+	end else if (!tx_transmitting && !tx_en) begin
 		if (send_state == SST_IDLE && !send_fifo_empty) begin
 			send_state <= SST_SOF;
 			send_len <= send_fifo_rd_data + 8'd5;
