@@ -680,5 +680,8 @@ assign debug[23:20] = unit;
 assign debug[31:24] = stepper_debug;
 assign debug[47:32] = as5311_debug;
 assign debug[52:48] = dro_debug;
+//assign debug[47:32] = dro_debug;
+//assign debug[52:48] = 0;
+
 
 endmodule

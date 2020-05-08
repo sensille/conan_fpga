@@ -81,7 +81,7 @@ localparam PS_DRO_DATA_5	= 7;
 localparam PS_MAX		= 7;
 
 localparam PS_BITS= $clog2(PS_MAX + 1);
-reg [PS_BITS-1:0] state;
+reg [PS_BITS-1:0] state = 0;
 
 localparam DR_IDLE		= 0;
 localparam DR_CLK_LO		= 1;
@@ -102,7 +102,11 @@ initial begin
 		clk_deb_cnt[i] = 0;
 		do_deb_cnt[i] = 0;
 		dr_state[i] = DR_IDLE;
+		timeout[i] = 0;
+		timeout_cnt[i] = 0;
+		bits[i] = 0;
 	end
+
 end
 
 /* receive state machine */
