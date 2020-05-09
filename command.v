@@ -445,7 +445,8 @@ localparam MST_DISPATCH_WAIT_DONE = 7;
 localparam MST_PARAM = 8;
 localparam MST_PARAM_SKIP = 9;
 localparam MST_PARAM_SEND = 10;
-localparam MST_MAX = 10;
+localparam MST_PARSE_ARG_END = 11;
+localparam MST_MAX = 11;
 localparam MST_BITS = $clog2(MST_MAX + 1);
 
 reg [MST_BITS-1:0] msg_state = 0;
@@ -475,7 +476,6 @@ reg [5:0] str_pos = 0;
 reg [5:0] str_len = 0;
 reg [7:0] str_buf[64];
 
-reg _arg_end;
 integer i;
 always @(posedge clk) begin
 	if (msg_rd_en) begin
@@ -497,9 +497,6 @@ always @(posedge clk) begin
 	 * ------------------------------------
 	 */
 	if (msg_ready && !msg_rd_en) begin
-		/* verilator lint_off BLKSEQ */
-		_arg_end = 0;
-		/* verilator lint_on BLKSEQ */
 		msg_rd_en <= 1;
 		if (msg_state == MST_IDLE) begin
 			msg_cmd <= msg_data;
@@ -510,29 +507,22 @@ always @(posedge clk) begin
 			else
 				msg_state <= MST_PARSE_ARG_START;
 		end else if (msg_state == MST_PARSE_ARG_START) begin
-			args[curr_arg] <= msg_data[6:0];
-			/* store also to tmp_arg so we don't need to read back the value from
-			 * args[curr_arg]. This saves a read port */
 			tmp_arg <= msg_data[6:0];
 			if (msg_data[6:5] == 2'b11) begin
 				/* negative value */
 				tmp_arg[31:7] <= 25'b1111111111111111111111111;
-				args[curr_arg][31:7] <= 25'b1111111111111111111111111;
 			end
 			if (msg_data[7]) begin
 				msg_state <= MST_PARSE_ARG_CONT;
 			end else begin
-				/* verilator lint_off BLKSEQ */
-				_arg_end = 1;
-				/* verilator lint_on BLKSEQ */
+				msg_rd_en <= 0;
+				msg_state <= MST_PARSE_ARG_END;
 			end
 		end else if (msg_state == MST_PARSE_ARG_CONT) begin
 			tmp_arg <= { tmp_arg[24:0], msg_data[6:0] };
-			args[curr_arg] <= { tmp_arg[24:0], msg_data[6:0] };
 			if (!msg_data[7]) begin
-				/* verilator lint_off BLKSEQ */
-				_arg_end = 1;
-				/* verilator lint_on BLKSEQ */
+				msg_rd_en <= 0;
+				msg_state <= MST_PARSE_ARG_END;
 			end
 		end else if (msg_state == MST_STRING_START) begin
 			string_arg <= 0;
@@ -546,11 +536,8 @@ always @(posedge clk) begin
 			if (str_len == str_pos + 1) begin
 				msg_state <= MST_DISPATCH;
 			end
-		end else begin
-			/* we're in some of the states below */
-			msg_rd_en <= 0;	/* we're in some of the states below */
-		end
-		if (_arg_end) begin
+		end else if (msg_state == MST_PARSE_ARG_END) begin
+			args[curr_arg] <= tmp_arg;
 			curr_arg <= curr_arg + 1;
 			if (curr_arg + 1 == nargs) begin
 				if (string_arg) begin
@@ -561,6 +548,9 @@ always @(posedge clk) begin
 			end else begin
 				msg_state <= MST_PARSE_ARG_START;
 			end
+		end else begin
+			/* we're in some of the states below */
+			msg_rd_en <= 0;	/* we're in some of the states below */
 		end
 	/*
 	 * -------------------------
