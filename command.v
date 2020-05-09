@@ -440,11 +440,12 @@ localparam MST_PARSE_ARG_CONT = 2;
 localparam MST_STRING_START = 3;
 localparam MST_STRING_ARG = 4;
 localparam MST_DISPATCH = 5;
-localparam MST_DISPATCH_WAIT_DONE = 6;
-localparam MST_PARAM = 7;
-localparam MST_PARAM_SKIP = 8;
-localparam MST_PARAM_SEND = 9;
-localparam MST_MAX = 9;
+localparam MST_DISPATCH_1 = 6;
+localparam MST_DISPATCH_WAIT_DONE = 7;
+localparam MST_PARAM = 8;
+localparam MST_PARAM_SKIP = 9;
+localparam MST_PARAM_SEND = 10;
+localparam MST_MAX = 10;
 localparam MST_BITS = $clog2(MST_MAX + 1);
 
 reg [MST_BITS-1:0] msg_state = 0;
@@ -457,6 +458,7 @@ reg [ARGS_BITS-1:0] curr_arg = 0;
 reg [ARGS_BITS-1:0] nargs = 0;
 reg [UNITS_BITS-1:0] unit = 0;
 reg cmd_has_response = 0;
+reg [31:0] tmp_arg;
 
 /* output parameters state */
 localparam MAX_PARAMS = 8;
@@ -509,8 +511,12 @@ always @(posedge clk) begin
 				msg_state <= MST_PARSE_ARG_START;
 		end else if (msg_state == MST_PARSE_ARG_START) begin
 			args[curr_arg] <= msg_data[6:0];
+			/* store also to tmp_arg so we don't need to read back the value from
+			 * args[curr_arg]. This saves a read port */
+			tmp_arg <= msg_data[6:0];
 			if (msg_data[6:5] == 2'b11) begin
 				/* negative value */
+				tmp_arg[31:7] <= 25'b1111111111111111111111111;
 				args[curr_arg][31:7] <= 25'b1111111111111111111111111;
 			end
 			if (msg_data[7]) begin
@@ -521,7 +527,8 @@ always @(posedge clk) begin
 				/* verilator lint_on BLKSEQ */
 			end
 		end else if (msg_state == MST_PARSE_ARG_CONT) begin
-			args[curr_arg] <= { args[curr_arg][24:0], msg_data[6:0] };
+			tmp_arg <= { tmp_arg[24:0], msg_data[6:0] };
+			args[curr_arg] <= { tmp_arg[24:0], msg_data[6:0] };
 			if (!msg_data[7]) begin
 				/* verilator lint_off BLKSEQ */
 				_arg_end = 1;
@@ -530,7 +537,7 @@ always @(posedge clk) begin
 		end else if (msg_state == MST_STRING_START) begin
 			string_arg <= 0;
 			str_pos <= 0;
-			str_len <= args[curr_arg - 1];
+			str_len <= tmp_arg; /* == args[curr_arg - 1] */
 			msg_state <= MST_STRING_ARG;
 			msg_rd_en <= 0;	/* no read in this clock */
 		end else if (msg_state == MST_STRING_ARG) begin
@@ -555,14 +562,16 @@ always @(posedge clk) begin
 				msg_state <= MST_PARSE_ARG_START;
 			end
 		end
-	end
 	/*
 	 * -------------------------
 	 * stage 2, dispatch message
 	 * -------------------------
 	 */
-	if (msg_state == MST_DISPATCH) begin
-		unit_arg_data <= args[0];
+	end else if (msg_state == MST_DISPATCH) begin
+		unit_arg_ptr <= 0;
+		msg_state <= MST_DISPATCH_1;
+	end else if (msg_state == MST_DISPATCH_1) begin
+		unit_arg_data <= args[unit_arg_ptr];
 		unit_arg_ptr <= 1;
 		curr_param <= 0;
 		nparams <= 0;

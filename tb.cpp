@@ -926,6 +926,11 @@ test_time(sim_t *sp)
 	uint64_t curr;
 	watch_t *wp = sp->wp;
 
+	watch_add(wp, "u_command.tmp_arg", "tmp_arg", NULL, FORM_HEX, WF_ALL);
+	watch_add(wp, "u_command.args", "args", NULL, FORM_HEX, WF_ALL);
+	watch_add(wp, "u_command.curr_arg", "curr_arg", NULL, FORM_HEX, WF_ALL);
+	watch_add(wp, "u_system.arg_data", "arg_data", NULL, FORM_HEX, WF_ALL);
+	watch_add(wp, "u_system.temp_data", "temp_data", NULL, FORM_HEX, WF_ALL);
 	watch_add(wp, "u_system.cmd_ready", "rdy", NULL, FORM_BIN, WF_ALL);
 	watch_add(wp, "u_system.latched_time$", "latch", NULL, FORM_DEC, WF_ALL);
 	watch_add(wp, "u_system.latched$", "latched", NULL, FORM_BIN, WF_ALL);

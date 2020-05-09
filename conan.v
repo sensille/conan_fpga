@@ -3,7 +3,7 @@
 
 module conan #(
 	parameter BAUD = 250000,
-	parameter LEN_BITS = 6,
+	parameter LEN_BITS = 7,
 	parameter LEN_FIFO_BITS = 5,
 	parameter MOVE_COUNT = 1024,
 	parameter NGPIO = 9,
