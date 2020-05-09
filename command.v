@@ -79,7 +79,7 @@ module command #(
  * strings are always last
  * 
  */
-localparam MAX_ARGS = 8;
+localparam MAX_ARGS = 64;
 localparam ARGS_BITS = $clog2(MAX_ARGS);
 
 localparam UNITS_BITS		= 4;
@@ -178,7 +178,7 @@ wire shutdown; /* set by command, never cleared */
 wire [MISSED_BITS-1:0] missed_clock;
 assign missed_clock[MISSED_REQ_SHUTDOWN] = req_shutdown;
 
-reg [ARGS_BITS-1:0] unit_arg_ptr = 0;
+reg [ARGS_BITS-1:0] unit_arg_ptr;
 reg [31:0] unit_arg_data = 0;
 wire [NUNITS-1:0] unit_arg_advance;
 wire [CMD_BITS-1:0] unit_cmd;
@@ -462,11 +462,11 @@ reg cmd_has_response = 0;
 reg [31:0] tmp_arg;
 
 /* output parameters state */
-localparam MAX_PARAMS = 8;
+localparam MAX_PARAMS = 64;
 localparam PARAM_BITS = $clog2(MAX_PARAMS);
 reg [31:0] params [MAX_PARAMS];
 reg [PARAM_BITS-1:0] nparams = 0;
-reg [PARAM_BITS-1:0] curr_param = 0;
+reg [PARAM_BITS-1:0] curr_param;
 reg [34:0] rcv_param = 0;
 reg [2:0] curr_cnt = 0;	/* counter for VLQ */
 reg [7:0] rsp_len = 0;
