@@ -28,7 +28,7 @@ module stepper #(
 	input wire cmd_ready,
 	output reg cmd_done = 0,
 
-	output reg [31:0] param_data = 0,
+	output reg [32:0] param_data = 0,
 	output reg param_write = 0,
 
 	output reg invol_req = 0,

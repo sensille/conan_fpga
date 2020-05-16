@@ -13,6 +13,7 @@ module command #(
 	parameter NUART = 0,
 	parameter NDRO = 0,
 	parameter NAS5311 = 0,
+	parameter NSD = 0,
 	parameter VERSION = 0
 ) (
 	input wire clk,
@@ -58,6 +59,13 @@ module command #(
 	output wire [NAS5311-1:0] as5311_cs,
 	input wire [NAS5311-1:0] as5311_do,
 
+	output wire [NSD-1:0] sd_clk,
+	inout wire [NSD-1:0] sd_cmd,
+	inout wire [NSD-1:0] sd_dat0,
+	inout wire [NSD-1:0] sd_dat1,
+	inout wire [NSD-1:0] sd_dat2,
+	inout wire [NSD-1:0] sd_dat3,
+
 	input wire [63:0] time_in,
 	output wire [63:0] time_out,
 	output wire time_out_en,
@@ -90,7 +98,8 @@ localparam UNIT_TMCUART		= 4'd3;
 localparam UNIT_GPIO		= 4'd4;
 localparam UNIT_DRO		= 4'd5;
 localparam UNIT_AS5311		= 4'd6;
-localparam NUNITS		= 4'd7;
+localparam UNIT_SD		= 4'd7;
+localparam NUNITS		= 4'd8;
 
 localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 1;
 localparam CMD_GET_VERSION		= 0;
@@ -116,7 +125,11 @@ localparam CMD_SHUTDOWN			= 19;
 localparam CMD_STEPPER_GET_NEXT		= 20;
 localparam CMD_CONFIG_DRO		= 21;
 localparam CMD_CONFIG_AS5311		= 22;
-localparam NCMDS			= 23;
+localparam CMD_CONFIG_SD		= 23;
+localparam CMD_SD_INIT			= 24;
+localparam CMD_SD_CMD			= 25;
+localparam CMD_SD_DATA			= 26;
+localparam NCMDS			= 27;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
@@ -128,6 +141,8 @@ localparam RSP_SHUTDOWN		= 5;
 localparam RSP_STEPPER_GET_NEXT	= 6;
 localparam RSP_DRO_DATA		= 7;
 localparam RSP_AS5311_DATA	= 8;
+localparam RSP_SD_CMD		= 9;
+localparam RSP_SD_DATA		= 10;
 
 localparam MISSED_STEPPER	= 0;
 localparam MISSED_ENDSTOP	= 1;
@@ -172,6 +187,10 @@ initial begin
 	cmdtab[CMD_STEPPER_GET_NEXT] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b1 };
 	cmdtab[CMD_CONFIG_DRO] = { UNIT_DRO, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_CONFIG_AS5311] = { UNIT_AS5311, ARGS_4, 1'b0, 1'b0 };
+	cmdtab[CMD_CONFIG_SD] = { UNIT_SD, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_SD_INIT] = { UNIT_SD, ARGS_1, 1'b0, 1'b0 };
+	cmdtab[CMD_SD_CMD] = { UNIT_SD, ARGS_3, 1'b1, 1'b0 };
+	cmdtab[CMD_SD_DATA] = { UNIT_SD, ARGS_3, 1'b1, 1'b0 };
 end
 
 wire shutdown; /* set by command, never cleared */
@@ -184,7 +203,7 @@ wire [NUNITS-1:0] unit_arg_advance;
 wire [CMD_BITS-1:0] unit_cmd;
 reg [NUNITS-1:0] unit_cmd_ready = 0;
 wire [NUNITS-1:0] unit_cmd_done;
-wire [31:0] unit_param_data [NUNITS];
+wire [32:0] unit_param_data [NUNITS];
 wire [NUNITS-1:0] unit_param_write;
 wire [NUNITS-1:0] unit_invol_req;
 reg [NUNITS-1:0] unit_invol_grant = 0;
@@ -234,6 +253,7 @@ system #(
 	.NUART(NUART),
 	.NDRO(NDRO),
 	.NAS5311(NAS5311),
+	.NSD(NSD),
 	.MISSED_BITS(MISSED_BITS),
 	.CMD_BITS(CMD_BITS)
 ) u_system (
@@ -434,6 +454,45 @@ as5311 #(
 	.shutdown(shutdown)
 );
 
+wire [15:0] sd_debug;
+sd #(
+	.HZ(HZ),
+	.NSD(NSD),
+	.CMD_CONFIG_SD(CMD_CONFIG_SD),
+	.CMD_SD_INIT(CMD_SD_INIT),
+	.CMD_SD_CMD(CMD_SD_CMD),
+	.CMD_SD_DATA(CMD_SD_DATA),
+	.RSP_SD_CMD(RSP_SD_CMD),
+	.RSP_SD_DATA(RSP_SD_DATA),
+	.CMD_BITS(CMD_BITS)
+) u_sd (
+	.clk(clk),
+	.systime(systime),
+
+	.arg_data(unit_arg_data),
+	.arg_advance(unit_arg_advance[UNIT_SD]),
+	.cmd(unit_cmd),
+	.cmd_ready(unit_cmd_ready[UNIT_SD]),
+	.cmd_done(unit_cmd_done[UNIT_SD]),
+
+	.param_data(unit_param_data[UNIT_SD]),
+	.param_write(unit_param_write[UNIT_SD]),
+
+	.invol_req(unit_invol_req[UNIT_SD]),
+	.invol_grant(unit_invol_grant[UNIT_SD]),
+
+	.sd_clk(sd_clk),
+	.sd_cmd(sd_cmd),
+	.sd_dat0(sd_dat0),
+	.sd_dat1(sd_dat1),
+	.sd_dat2(sd_dat2),
+	.sd_dat3(sd_dat3),
+
+	.debug(sd_debug),
+
+	.shutdown(shutdown)
+);
+
 localparam MST_IDLE = 0;
 localparam MST_PARSE_ARG_START = 1;
 localparam MST_PARSE_ARG_CONT = 2;
@@ -464,17 +523,18 @@ reg [31:0] tmp_arg;
 /* output parameters state */
 localparam MAX_PARAMS = 64;
 localparam PARAM_BITS = $clog2(MAX_PARAMS);
-reg [31:0] params [MAX_PARAMS];
+localparam STRLEN = 6;	/* in bits, longest string is 64 bytes */
+/* 32 bit data + 1 bit if this param is the start of a string (bit 32) */
+reg [32:0] params [MAX_PARAMS];
 reg [PARAM_BITS-1:0] nparams = 0;
 reg [PARAM_BITS-1:0] curr_param;
 reg [34:0] rcv_param = 0;
-reg [2:0] curr_cnt = 0;	/* counter for VLQ */
+reg [STRLEN-1:0] curr_cnt;	/* counter for VLQ */
 reg [7:0] rsp_len = 0;
 reg string_arg = 0;
+reg send_str;
 /* assume max string is 64 */
-reg [5:0] str_pos = 0;
-reg [5:0] str_len = 0;
-reg [7:0] str_buf[64];
+reg [STRLEN-1:0] str_len = 0;
 
 integer i;
 always @(posedge clk) begin
@@ -526,14 +586,14 @@ always @(posedge clk) begin
 			end
 		end else if (msg_state == MST_STRING_START) begin
 			string_arg <= 0;
-			str_pos <= 0;
 			str_len <= tmp_arg; /* == args[curr_arg - 1] */
 			msg_state <= MST_STRING_ARG;
 			msg_rd_en <= 0;	/* no read in this clock */
 		end else if (msg_state == MST_STRING_ARG) begin
-			str_buf[str_pos] <= msg_data;
-			str_pos <= str_pos + 1;
-			if (str_len == str_pos + 1) begin
+			args[curr_arg] <= msg_data;
+			str_len <= str_len - 1;
+			curr_arg <= curr_arg + 1;
+			if (str_len == 1) begin
 				msg_state <= MST_DISPATCH;
 			end
 		end else if (msg_state == MST_PARSE_ARG_END) begin
@@ -593,7 +653,7 @@ always @(posedge clk) begin
 	 * stage 3, encode and send response
 	 * ---------------------------------
 	 */
-	end else if (msg_state == MST_PARAM) begin
+	end else if (msg_state == MST_PARAM && !params[curr_param][32]) begin
 		/*
 		 * encode VLQ param
 		 */
@@ -604,13 +664,24 @@ always @(posedge clk) begin
 		 * < 0c000000 && >= fc000000 length 4
 		 * else length 5
 		 */
-		curr_cnt <= 4;
+		curr_cnt <= 5;
 		/* extend by 3 bits, 32+3 == 5 * 7 */
 		rcv_param <= { params[curr_param][31], params[curr_param][31],
 				params[curr_param][31], params[curr_param] };
+		send_str <= 0;
 		msg_state <= MST_PARAM_SKIP;
+	end else if (msg_state == MST_PARAM && params[curr_param][32]) begin
+		/*
+		 * encode string
+		 */
+		curr_cnt <= params[curr_param][STRLEN-1:0];
+		send_ring_data <= params[curr_param][STRLEN-1:0];
+		send_ring_wr_en <= 1;
+		rsp_len <= rsp_len + 1;
+		send_str <= 1;
+		msg_state <= MST_PARAM_SEND;
 	end else if (msg_state == MST_PARAM_SKIP) begin
-		if (curr_cnt != 0 &&
+		if (curr_cnt != 1 &&
 		    (rcv_param[34:26] == 9'b111111111 ||
 		     rcv_param[34:26] <  9'b000000011)) begin
 			curr_cnt <= curr_cnt - 1;
@@ -619,7 +690,7 @@ always @(posedge clk) begin
 			msg_state <= MST_PARAM_SEND;
 		end
 	end else if (msg_state == MST_PARAM_SEND) begin
-		if (curr_cnt == 0) begin
+		if (curr_cnt == 1) begin
 			if (curr_param + 1 != nparams) begin
 				curr_param <= curr_param + 1;
 				msg_state <= MST_PARAM;
@@ -632,7 +703,10 @@ always @(posedge clk) begin
 		end else begin
 			send_ring_data[7] <= 1'b1;
 		end
-		send_ring_data[6:0] <= rcv_param[34:28];
+		if (send_str)
+			send_ring_data <= params[curr_param];
+		else
+			send_ring_data[6:0] <= rcv_param[34:28];
 		send_ring_wr_en <= 1;
 		rsp_len <= rsp_len + 1;
 		curr_cnt <= curr_cnt - 1;

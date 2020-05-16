@@ -13,6 +13,7 @@ module conan #(
 	parameter NUART = 6,
 	parameter NDRO = 2,
 	parameter NAS5311 = 3,
+	parameter NSD = 1,
 	parameter VERSION = 66
 ) (
 	input wire clk_50mhz,
@@ -99,12 +100,12 @@ module conan #(
 	input wire chain_out_in1,
 	input wire chain_out_in2,
 
-	output wire esp_tx,
-	input wire esp_en,
-	input wire esp_rst,
+	inout wire esp_tx,
+	inout wire esp_en,
+	inout wire esp_rst,
 	output wire esp_gpio2,
-	output wire esp_flash,
-	output wire esp_rx,
+	inout wire esp_flash,
+	inout wire esp_rx,
 
 	output wire drclk,
 	output wire enn,
@@ -300,6 +301,13 @@ wire [NAS5311-1:0] as5311_clk;
 wire [NAS5311-1:0] as5311_cs;
 wire [NAS5311-1:0] as5311_do;
 
+wire [NSD-1:0] sd_clk;
+wire [NSD-1:0] sd_cmd;
+wire [NSD-1:0] sd_dat0;
+wire [NSD-1:0] sd_dat1;
+wire [NSD-1:0] sd_dat2;
+wire [NSD-1:0] sd_dat3;
+
 reg req_shutdown = 0;
 
 command #(
@@ -314,6 +322,7 @@ command #(
 	.NUART(NUART),
 	.NDRO(NDRO),
 	.NAS5311(NAS5311),
+	.NSD(NSD),
 	.VERSION(VERSION)
 ) u_command (
 	.clk(clk),
@@ -354,6 +363,13 @@ command #(
 	.as5311_clk(as5311_clk),
 	.as5311_cs(as5311_cs),
 	.as5311_do(as5311_do),
+
+	.sd_clk(sd_clk),
+	.sd_cmd(sd_cmd),
+	.sd_dat0(sd_dat0),
+	.sd_dat1(sd_dat1),
+	.sd_dat2(sd_dat2),
+	.sd_dat3(sd_dat3),
 
 	.time_in(systime),
 	.time_out(systime_set),
@@ -599,11 +615,20 @@ assign ldata[63:48] = step_debug;
 /*
  * direct output for scope debugging
  */
+`ifdef notanymore
 assign esp_rx = fpga1;		/* rx */
 assign esp_flash = fpga2;	/* tx */
 assign esp_tx = fpga5;		/* timesync */
 assign esp_gpio2 = pwm11;
 assign exp2_9 = step6;
 assign exp2_10 = dir6;
+`else
+assign esp_gpio2 = sd_clk[0];
+assign esp_en = sd_cmd[0];
+assign esp_tx = sd_dat0[0];
+assign esp_en = sd_dat1[0];
+assign esp_rst = sd_dat2[0];
+assign esp_flash = sd_dat3[0];
+`endif
 
 endmodule
