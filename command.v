@@ -60,11 +60,18 @@ module command #(
 	input wire [NAS5311-1:0] as5311_do,
 
 	output wire [NSD-1:0] sd_clk,
-	inout wire [NSD-1:0] sd_cmd,
-	inout wire [NSD-1:0] sd_dat0,
-	inout wire [NSD-1:0] sd_dat1,
-	inout wire [NSD-1:0] sd_dat2,
-	inout wire [NSD-1:0] sd_dat3,
+	output wire [NSD-1:0] sd_cmd_en,
+	input wire [NSD-1:0] sd_cmd_in,
+	output wire [NSD-1:0] sd_cmd_r,
+	output wire [NSD-1:0] sd_dat_en,
+	input wire [NSD-1:0] sd_dat0_in,
+	input wire [NSD-1:0] sd_dat1_in,
+	input wire [NSD-1:0] sd_dat2_in,
+	input wire [NSD-1:0] sd_dat3_in,
+	output wire [NSD-1:0] sd_dat0_r,
+	output wire [NSD-1:0] sd_dat1_r,
+	output wire [NSD-1:0] sd_dat2_r,
+	output wire [NSD-1:0] sd_dat3_r,
 
 	input wire [63:0] time_in,
 	output wire [63:0] time_out,
@@ -125,11 +132,8 @@ localparam CMD_SHUTDOWN			= 19;
 localparam CMD_STEPPER_GET_NEXT		= 20;
 localparam CMD_CONFIG_DRO		= 21;
 localparam CMD_CONFIG_AS5311		= 22;
-localparam CMD_CONFIG_SD		= 23;
-localparam CMD_SD_INIT			= 24;
-localparam CMD_SD_CMD			= 25;
-localparam CMD_SD_DATA			= 26;
-localparam NCMDS			= 27;
+localparam CMD_SD_QUEUE			= 23;
+localparam NCMDS			= 24;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
@@ -141,8 +145,8 @@ localparam RSP_SHUTDOWN		= 5;
 localparam RSP_STEPPER_GET_NEXT	= 6;
 localparam RSP_DRO_DATA		= 7;
 localparam RSP_AS5311_DATA	= 8;
-localparam RSP_SD_CMD		= 9;
-localparam RSP_SD_DATA		= 10;
+localparam RSP_SD_CMDQ		= 9;
+localparam RSP_SD_DATQ		= 10;
 
 localparam MISSED_STEPPER	= 0;
 localparam MISSED_ENDSTOP	= 1;
@@ -187,10 +191,7 @@ initial begin
 	cmdtab[CMD_STEPPER_GET_NEXT] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b1 };
 	cmdtab[CMD_CONFIG_DRO] = { UNIT_DRO, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_CONFIG_AS5311] = { UNIT_AS5311, ARGS_4, 1'b0, 1'b0 };
-	cmdtab[CMD_CONFIG_SD] = { UNIT_SD, ARGS_2, 1'b0, 1'b0 };
-	cmdtab[CMD_SD_INIT] = { UNIT_SD, ARGS_1, 1'b0, 1'b0 };
-	cmdtab[CMD_SD_CMD] = { UNIT_SD, ARGS_3, 1'b1, 1'b0 };
-	cmdtab[CMD_SD_DATA] = { UNIT_SD, ARGS_3, 1'b1, 1'b0 };
+	cmdtab[CMD_SD_QUEUE] = { UNIT_SD, ARGS_2, 1'b1, 1'b0 };
 end
 
 wire shutdown; /* set by command, never cleared */
@@ -458,12 +459,9 @@ wire [15:0] sd_debug;
 sd #(
 	.HZ(HZ),
 	.NSD(NSD),
-	.CMD_CONFIG_SD(CMD_CONFIG_SD),
-	.CMD_SD_INIT(CMD_SD_INIT),
-	.CMD_SD_CMD(CMD_SD_CMD),
-	.CMD_SD_DATA(CMD_SD_DATA),
-	.RSP_SD_CMD(RSP_SD_CMD),
-	.RSP_SD_DATA(RSP_SD_DATA),
+	.CMD_SD_QUEUE(CMD_SD_QUEUE),
+	.RSP_SD_CMDQ(RSP_SD_CMDQ),
+	.RSP_SD_DATQ(RSP_SD_DATQ),
 	.CMD_BITS(CMD_BITS)
 ) u_sd (
 	.clk(clk),
@@ -482,11 +480,18 @@ sd #(
 	.invol_grant(unit_invol_grant[UNIT_SD]),
 
 	.sd_clk(sd_clk),
-	.sd_cmd(sd_cmd),
-	.sd_dat0(sd_dat0),
-	.sd_dat1(sd_dat1),
-	.sd_dat2(sd_dat2),
-	.sd_dat3(sd_dat3),
+	.sd_cmd_en(sd_cmd_en),
+	.sd_cmd_in(sd_cmd_in),
+	.sd_cmd_r(sd_cmd_r),
+	.sd_dat_en(sd_dat_en),
+	.sd_dat0_in(sd_dat0_in),
+	.sd_dat1_in(sd_dat1_in),
+	.sd_dat2_in(sd_dat2_in),
+	.sd_dat3_in(sd_dat3_in),
+	.sd_dat0_r(sd_dat0_r),
+	.sd_dat1_r(sd_dat1_r),
+	.sd_dat2_r(sd_dat2_r),
+	.sd_dat3_r(sd_dat3_r),
 
 	.debug(sd_debug),
 
@@ -612,12 +617,13 @@ always @(posedge clk) begin
 			/* we're in some of the states below */
 			msg_rd_en <= 0;	/* we're in some of the states below */
 		end
+	end
 	/*
 	 * -------------------------
 	 * stage 2, dispatch message
 	 * -------------------------
 	 */
-	end else if (msg_state == MST_DISPATCH) begin
+	if (msg_state == MST_DISPATCH) begin
 		unit_arg_ptr <= 0;
 		msg_state <= MST_DISPATCH_1;
 	end else if (msg_state == MST_DISPATCH_1) begin

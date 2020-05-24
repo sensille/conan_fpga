@@ -30,6 +30,7 @@
 #define CMD_STEPPER_GET_NEXT	20
 #define CMD_CONFIG_DRO		21
 #define CMD_CONFIG_AS5311	22
+#define CMD_SD_QUEUE		23
 
 #define RSP_GET_VERSION		0
 #define RSP_GET_TIME		1
@@ -40,6 +41,8 @@
 #define RSP_STEPPER_GET_NEXT	6
 #define RSP_DRO_DATA		7
 #define RSP_AS5311_DATA		8
+#define RSP_SD_CMDQ		9
+#define RSP_SD_DATQ		10
 
 #define HZ 48000000
 #define NUART 6
@@ -1845,12 +1848,56 @@ test_as5311(sim_t *sp)
 }
 
 static void
+test_sd(sim_t *sp)
+{
+	Vconan *tb = sp->tb;
+	int i;
+	uint32_t rsp[5];
+
+	watch_add(sp->wp, "u_command.msg_state$", "msg_state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_command.str_len$", "str_len", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_command.msg_ready$", "msg_ready", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_command.unit$", "unit", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_sd.state$", "sd_state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_sd.cmd_ready$", "cmdr", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_sd.cmd_len$", "cmd_len", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_sd_cmd_fifo.ram$", "ram", NULL, FORM_HEX, WF_ALL);
+#if 0
+	watch_add(sp->wp, "u_sdc.payload_data", "pl_data", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.payload_valid", "pl_valid", NULL, FORM_DEC, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_sdc.cmd_data", "c_data", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.cmd_valid", "c_valid", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.cmd_full", "c_full", NULL, FORM_HEX, WF_ALL);
+#if 0
+	watch_add(sp->wp, "u_sdc.output_data", "o_data", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.output_empty", "o_empty", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.output_advance", "o_advance", NULL, FORM_HEX, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_sdc.sd_clk", "clk", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.sd_cmd_en", "cmd_en", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.sd_cmd_r", "cmd_r", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.sd_cmd_in", "cmd_in", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.sd_dat_en", "dat_en", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.sd_dat._r", "dat_r", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.sd_dat._in", "dat_in", NULL, FORM_HEX, WF_ALL);
+
+	/* channel, divider, data interval, mag interval */
+	uart_send_vlq_and_wait(sp, 5, CMD_SD_QUEUE, 0, 2, 0x23, 0x45);
+	delay(sp, 100000);
+}
+
+static void
 test(sim_t *sp)
 {
 	delay(sp, 1);	/* pass back control after initialization */
 
 	test_time(sp);	/* always needed as time sync */
 	test_version(sp);
+#if 0
+	test_sd(sp);
+#endif
+#if 1
 	test_pwm(sp);
 	test_tmcuart(sp);
 	test_gpio(sp);
@@ -1858,6 +1905,7 @@ test(sim_t *sp)
 	test_as5311(sp);
 	/* must be last, as it ends with a shutdown */
 	test_stepper(sp);
+#endif
 
 	printf("test succeeded after %d cycles\n", sp->cycle);
 

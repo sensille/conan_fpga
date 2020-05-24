@@ -6,11 +6,11 @@ all: $(TARGET).bit
 VINC=/usr/local/share/verilator/include
 
 SRC = led7219.v pll.v uart.v framing.v fifo.v command.v pwm.v system.v \
-       stepper.v stepdir.v tmcuart.v gpio.v dro.v as5311.v sd.v $(TARGET).v
+       stepper.v stepdir.v tmcuart.v gpio.v dro.v as5311.v sd.v sdc.v $(TARGET).v
 
 $(TARGET).json: $(SRC) $(TARGET).lpf Makefile
-	#yosys -q -f "verilog -defer" -p "synth_ecp5 -top $(TARGET) -json $(TARGET).json" $(SRC)
-	yosys -f "verilog -defer" -p "synth_ecp5 -top $(TARGET) -json $(TARGET).json" $(SRC)
+	yosys -q -f "verilog -defer" -p "synth_ecp5 -top $(TARGET) -json $(TARGET).json" $(SRC)
+	#yosys -f "verilog -defer" -p "synth_ecp5 -top $(TARGET) -json $(TARGET).json" $(SRC)
 
 %_out.config: %.json $(TARGET).lpf
 	nextpnr-ecp5 -q -l nextpnr.log --json $< --textcfg $@ --45k --package CABGA256 --lpf $(TARGET).lpf

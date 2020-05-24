@@ -43,8 +43,8 @@ module conan #(
 	input wire exp2_5,
 	input wire exp2_4,
 	input wire exp2_3,
-	input wire exp2_2,
-	input wire exp2_1,
+	output wire exp2_2,
+	output wire exp2_1,
 
 	input wire exp1_17,
 	input wire exp1_16,
@@ -55,8 +55,8 @@ module conan #(
 	input wire exp1_11,
 	input wire exp1_10,
 	input wire exp1_9,
-	output wire exp1_8,
-	output wire exp1_7,
+	input wire exp1_8,
+	input wire exp1_7,
 	input wire exp1_6,
 	output wire exp1_5,
 	output wire exp1_4,
@@ -100,12 +100,12 @@ module conan #(
 	input wire chain_out_in1,
 	input wire chain_out_in2,
 
-	inout wire esp_tx,
-	inout wire esp_en,
-	inout wire esp_rst,
+	inout reg esp_tx,
+	inout reg esp_en,
+	inout reg esp_rst,
 	output wire esp_gpio2,
 	inout wire esp_flash,
-	inout wire esp_rx,
+	inout reg esp_rx,
 
 	output wire drclk,
 	output wire enn,
@@ -302,11 +302,18 @@ wire [NAS5311-1:0] as5311_cs;
 wire [NAS5311-1:0] as5311_do;
 
 wire [NSD-1:0] sd_clk;
-wire [NSD-1:0] sd_cmd;
-wire [NSD-1:0] sd_dat0;
-wire [NSD-1:0] sd_dat1;
-wire [NSD-1:0] sd_dat2;
-wire [NSD-1:0] sd_dat3;
+wire [NSD-1:0] sd_cmd_en;
+wire [NSD-1:0] sd_cmd_in;
+wire [NSD-1:0] sd_cmd_r;
+wire [NSD-1:0] sd_dat_en;
+reg [NSD-1:0] sd_dat0_in;
+reg [NSD-1:0] sd_dat1_in;
+reg [NSD-1:0] sd_dat2_in;
+reg [NSD-1:0] sd_dat3_in;
+wire [NSD-1:0] sd_dat0_r;
+wire [NSD-1:0] sd_dat1_r;
+wire [NSD-1:0] sd_dat2_r;
+wire [NSD-1:0] sd_dat3_r;
 
 reg req_shutdown = 0;
 
@@ -365,11 +372,18 @@ command #(
 	.as5311_do(as5311_do),
 
 	.sd_clk(sd_clk),
-	.sd_cmd(sd_cmd),
-	.sd_dat0(sd_dat0),
-	.sd_dat1(sd_dat1),
-	.sd_dat2(sd_dat2),
-	.sd_dat3(sd_dat3),
+	.sd_cmd_en(sd_cmd_en),
+	.sd_cmd_in(sd_cmd_in),
+	.sd_cmd_r(sd_cmd_r),
+	.sd_dat_en(sd_dat_en),
+	.sd_dat0_in(sd_dat0_in),
+	.sd_dat1_in(sd_dat1_in),
+	.sd_dat2_in(sd_dat2_in),
+	.sd_dat3_in(sd_dat3_in),
+	.sd_dat0_r(sd_dat0_r),
+	.sd_dat1_r(sd_dat1_r),
+	.sd_dat2_r(sd_dat2_r),
+	.sd_dat3_r(sd_dat3_r),
 
 	.time_in(systime),
 	.time_out(systime_set),
@@ -402,9 +416,10 @@ assign as5311_do[0] = exp1_3;
 assign exp1_4 = as5311_clk[1];
 assign exp1_5 = as5311_cs[1];
 assign as5311_do[1] = exp1_6;
-assign exp1_7 = as5311_clk[2];
-assign exp1_8 = as5311_cs[2];
-assign as5311_do[2] = exp1_9;
+
+assign exp2_1 = as5311_clk[2];
+assign exp2_2 = as5311_cs[2];
+assign as5311_do[2] = exp2_3;
 /*
  * Stepper driver
  */
@@ -613,6 +628,22 @@ assign ldata[47:40] = d_idle[5][31:24];
 assign ldata[63:48] = step_debug;
 
 /*
+ * sd card tri-state
+ */
+always @(*) begin: sdmux
+	esp_gpio2 = sd_clk[0];
+	esp_en = sd_cmd_en[0] ? sd_cmd_r[0] : 1'bZ;
+	esp_tx = sd_dat_en[0] ? sd_dat0_r[0] : 1'bZ;
+	esp_rx = sd_dat_en[0] ? sd_dat1_r[0] : 1'bZ;
+	esp_rst = sd_dat_en[0] ? sd_dat2_r[0] : 1'bZ;
+	esp_flash = sd_dat_en[0] ? sd_dat3_r[0] : 1'bZ;
+	sd_dat0_in = esp_tx;
+	sd_dat1_in = esp_rx;
+	sd_dat2_in = esp_rst;
+	sd_dat3_in = esp_flash;
+end
+
+/*
  * direct output for scope debugging
  */
 `ifdef notanymore
@@ -622,13 +653,6 @@ assign esp_tx = fpga5;		/* timesync */
 assign esp_gpio2 = pwm11;
 assign exp2_9 = step6;
 assign exp2_10 = dir6;
-`else
-assign esp_gpio2 = sd_clk[0];
-assign esp_en = sd_cmd[0];
-assign esp_tx = sd_dat0[0];
-assign esp_en = sd_dat1[0];
-assign esp_rst = sd_dat2[0];
-assign esp_flash = sd_dat3[0];
 `endif
 
 endmodule

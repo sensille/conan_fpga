@@ -5,12 +5,9 @@ module sd #(
 	parameter HZ = 0,
 	parameter CMD_BITS = 0,
 	parameter NSD = 0,
-	parameter CMD_CONFIG_SD = 0,
-	parameter CMD_SD_INIT = 0,
-	parameter CMD_SD_CMD = 0,
-	parameter CMD_SD_DATA = 0,
-	parameter RSP_SD_CMD = 0,
-	parameter RSP_SD_DATA = 0
+	parameter CMD_SD_QUEUE = 0,
+	parameter RSP_SD_CMDQ = 0,
+	parameter RSP_SD_DATQ = 0
 ) (
 	input wire clk,
 	input wire [31:0] systime,
@@ -27,12 +24,19 @@ module sd #(
 	output reg invol_req = 0,
 	input wire invol_grant,
 
-	output reg [NSD-1:0] sd_clk,
-	inout wire [NSD-1:0] sd_cmd,
-	inout wire [NSD-1:0] sd_dat0,
-	inout wire [NSD-1:0] sd_dat1,
-	inout wire [NSD-1:0] sd_dat2,
-	inout wire [NSD-1:0] sd_dat3,
+	output wire [NSD-1:0] sd_clk,
+	output wire [NSD-1:0] sd_cmd_en,
+	input wire [NSD-1:0] sd_cmd_in,
+	output wire [NSD-1:0] sd_cmd_r,
+	output wire [NSD-1:0] sd_dat_en,
+	input wire [NSD-1:0] sd_dat0_in,
+	input wire [NSD-1:0] sd_dat1_in,
+	input wire [NSD-1:0] sd_dat2_in,
+	input wire [NSD-1:0] sd_dat3_in,
+	output wire [NSD-1:0] sd_dat0_r,
+	output wire [NSD-1:0] sd_dat1_r,
+	output wire [NSD-1:0] sd_dat2_r,
+	output wire [NSD-1:0] sd_dat3_r,
 
 	output wire [15:0] debug,
 
@@ -40,134 +44,86 @@ module sd #(
 );
 
 /*
-	CMD_CONFIG_SD <channel> <clkdiv>
-	CMD_SD_CMD <channel> <flags> <cmd>(str)
-	RSP_SD_CMD <channel> <rsp>(str)
-	CMD_SD_DATA <channel> <flags> <offset> <data>(str)
-	RSP_SD_DATA <channel> <offset> <data>(str)
-	clkdiv 0 means disable
-
-	config: set clkdiv, generate 74 clocks
-
-	command has always 48 bits of data
-	command without response
-	command with 48 bits response
-	command with 136 bits response
-	command with 48 bits response and reading 512 byte on DAT
-	command with 48 bits response and writing 512 byte on DAT (optional wait for busy)
-	command with 48 bits response and reading 512 bits on DAT (status)
-
-	command <channel> <flags> <data>
-		flags: rsp: none - 48 bits - 136 bits - 512 bits on DAT
-                            wait for N packets of 512 byte on DAT
-			    N
-			    write N packets of 512 byte on DAT
-			    wait for non-busy before command
-			    queue without notify
-			    queue with notify
-			    will with own data
-	write <channel> <data (up to 48 byte chunk)>	consecutive writes must fill the block exactly
-	rsp read <channel> <data (up to 48 byte chunk)>	
+	CMD_SD_QUEUE <channel> <data>(str)
+	RSP_SD_CMDQ <channel> <data>(str)
+	RSP_SD_DATQ <channel> <data>(str)
 */
 
 localparam NSD_BITS = $clog2(NSD) ? $clog2(NSD) : 1;
 reg [NSD_BITS-1:0] channel = 0;
 
-localparam TIMEOUT_BITS = $clog2(HZ);	/* max timeout 1s */
+wire [7:0] sd_cmd_data = arg_data[7:0];
+reg [NSD-1:0] sd_cmd_valid = 0;
+wire [NSD-1:0] sd_cmd_full;
+wire [7:0] sd_output_data[NSD];
+wire [NSD-1:0] sd_output_empty;
+reg [NSD-1:0] sd_output_advance = 0;
+genvar gi;
+generate
+	for (gi = 0; gi < NSD; gi = gi + 1) begin : gensd
+		sdc #(
+			.HZ(HZ)
+		) u_sdc (
+			.clk(clk),
+			.payload_data(),
+			.payload_valid(),
+			.cmd_data(sd_cmd_data),
+			.cmd_valid(sd_cmd_valid[gi]),
+			.cmd_full(sd_cmd_full[gi]),
+			.output_data(sd_output_data[gi]),
+			.output_empty(sd_output_empty[gi]),
+			.output_advance(sd_output_advance[gi]),
 
-localparam PS_IDLE		= 0;
-localparam PS_CONFIG_SD_1	= 1;
-localparam PS_SD_INIT_1		= 2;
-localparam PS_SD_INIT_2		= 3;
-localparam PS_MAX		= 3;
+			/* SD card signals */
+			.sd_clk(sd_clk[gi]),
+			.sd_cmd_en(sd_cmd_en[gi]),
+			.sd_cmd_in(sd_cmd_in[gi]),
+			.sd_cmd_r(sd_cmd_r[gi]),
+			.sd_dat_en(sd_dat_en[gi]),
+			.sd_dat0_in(sd_dat0_in[gi]),
+			.sd_dat1_in(sd_dat1_in[gi]),
+			.sd_dat2_in(sd_dat2_in[gi]),
+			.sd_dat3_in(sd_dat3_in[gi]),
+			.sd_dat0_r(sd_dat0_r[gi]),
+			.sd_dat1_r(sd_dat1_r[gi]),
+			.sd_dat2_r(sd_dat2_r[gi]),
+			.sd_dat3_r(sd_dat3_r[gi])
+		);
+	end
+endgenerate
+
+localparam PS_IDLE			= 0;
+localparam PS_SD_QUEUE_1		= 1;
+localparam PS_SD_QUEUE_2		= 2;
+localparam PS_MAX			= 2;
 
 localparam PS_BITS= $clog2(PS_MAX + 1);
 reg [PS_BITS-1:0] state = 0;
-
-reg [NSD-1:0] sd_cmd_r;
-reg [NSD-1:0] sd_cmd_en = 0;
-reg [NSD-1:0] sd_dat_r[4];
-reg [NSD-1:0] sd_dat_en;
-reg [NSD-1:0] sd_dat_in[4];
-
-reg [11:0] clkdiv[NSD];
-reg [11:0] clkcnt[NSD];
-reg [7:0] initcnt;
-
-always @(*) begin: sdmux
-	integer i;
-
-	for (i = 0; i < NSD; i++) begin
-		if (sd_cmd_en[i])
-			sd_cmd = sd_cmd_r;
-		else
-			sd_cmd = 1'bZ;
-		if (sd_dat_en[i])
-			{ sd_dat0[i], sd_dat1[i], sd_dat2[i], sd_dat3[i] }  = sd_cmd_r;
-		else
-			{ sd_dat0[i], sd_dat1[i], sd_dat2[i], sd_dat3[i] }  = 4'bZ;
-		sd_dat_in[i] = { sd_dat0[i], sd_dat1[i], sd_dat2[i], sd_dat3[i] };
-	end
-end
+reg [6:0] cmd_len; /* counter for string len */
 
 always @(posedge clk) begin
-	if (cmd_done)
-		cmd_done <= 0;
+	cmd_done <= 0;
+	sd_cmd_valid <= 0;
+	arg_advance = 1;
 	if (state == PS_IDLE && cmd_ready) begin
 		// common to all cmds
-		arg_advance = 1;
 		channel <= arg_data[NSD_BITS-1:0];
-		if (cmd == CMD_CONFIG_SD) begin
-			state <= PS_CONFIG_SD_1;
-		end else if (cmd == CMD_SD_INIT) begin
-			state <= PS_SD_INIT_1;
-		end else if (cmd == CMD_SD_CMD) begin
-			state <= PS_SD_CMD_1;
+		if (cmd == CMD_SD_QUEUE) begin
+			state <= PS_SD_QUEUE_1;
 		end else begin
 			cmd_done <= 1;
 		end
-	end else if (state == PS_CONFIG_SD_1) begin
-		clkdiv[channel] <= arg_data;
-		sd_clk[channel] <= 1;
-		sd_cmd_en[channel] <= 0;
-		sd_dat_en[channel] <= 0;
-		sd_cmd_r[channel] <= 1;
-		sd_dat_r[channel] <= 4'b1111;
-		state <= PS_IDLE;
-		cmd_done <= 1;
-	end else if (state == PS_SD_INIT_1) begin
-		clkcnt[channel] <= clkdiv[channel];
-		initcnt <= 2 * 74 - 1;	/* generate 74 clocks for startup */
-		sd_clk[channel] <= 1;
-		state <= PS_SD_INIT_2;
-	end else if (state == PS_SD_INIT_2) begin
-		if (clkcnt[channel] == 0) begin
-			if (initcnt == 0) begin
-				state <= PS_IDLE;
-				cmd_done <= 1;
-			end else begin
-				sd_clk[channel] <= !sd_clk[channel];
-				clkcnt[channel] <= clkdiv[channel];
-				initcnt <= initcnt - 1;
-			end
-		end else begin
-			clkcnt[channel] <= clkcnt[channel] - 1;
-		end
-	end else if (state == PS_SD_CMD_1) begin
-		cmd_flags <= arg_data;
-		state <= PS_SD_CMD_2;
-	end else if (state == PS_SD_CMD_2) begin
-		if (arg_data != 6) begin
-			/* error */
+	end else if (state == PS_SD_QUEUE_1) begin
+		cmd_len <= arg_data;
+		state <= PS_SD_QUEUE_2;
+	end else if (state == PS_SD_QUEUE_2) begin
+		if (cmd_len == 0) begin
 			cmd_done <= 1;
 			state <= PS_IDLE;
 		end else begin
-			state <= PS_SD_CMD_3;
+			cmd_len <= cmd_len - 1;
+			sd_cmd_valid[channel] <= 1;
 		end
-	end else if (state == PS_SD_CMD_3) begin
-		send_enable <= 1;
-		send_data <= arg_data;
-		
 `ifdef notyet
 	end else if (state == PS_IDLE && data_valid) begin
 		invol_req <= 1;

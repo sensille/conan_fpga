@@ -238,7 +238,10 @@ reg send_ptr_init = 0;
 assign send_ring_full = ((send_wptr + 1'b1) == send_rptr) & send_ptr_init;
 
 always @(posedge clk) begin
-	if (send_ring_wr_en && !send_ring_full) begin
+	if (!send_ptr_init) begin
+		send_ptr_init <= 1;
+		send_wptr <= 0;
+	end else if (send_ring_wr_en && !send_ring_full) begin
 		send_ring[send_wptr] <= send_ring_data;
 		send_wptr <= send_wptr + 1'b1;
 	end
@@ -265,9 +268,7 @@ reg [2:0] send_state = SST_IDLE;
  */
 always @(posedge clk) begin
 	if (!send_ptr_init) begin
-		send_ptr_init <= 1;
 		send_rptr <= 0;
-		send_wptr <= 0;
 	end else if (!tx_transmitting && !tx_en) begin
 		if (send_state == SST_IDLE && !send_fifo_empty) begin
 			send_state <= SST_SOF;
