@@ -38,7 +38,7 @@ wire [ADDR_WIDTH - 1 : 0] next_wrptr = wrptr + 1;
 
 wire _empty = wrptr == rdptr;
 assign full = next_wrptr == rdptr;
-assign elemcnt = wrptr - rdptr;
+wire [ADDR_WIDTH - 1 : 0] _elemcnt = wrptr - rdptr;
 
 always @(posedge clk) begin
 	dout <= ram[rdptr];
@@ -56,6 +56,7 @@ always @(posedge clk) begin
 	end
 	/* delay one slot to be in sync with output data */
 	empty <= _empty;
+	elemcnt <= _elemcnt;
 end
 
 endmodule

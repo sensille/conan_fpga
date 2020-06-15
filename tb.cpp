@@ -7,6 +7,8 @@
 #include "verilated.h"
 #include "vsyms.h"
 
+static int color_disabled = 1;
+
 #define CMD_GET_VERSION		0
 #define CMD_SYNC_TIME		1
 #define CMD_GET_TIME		2
@@ -149,11 +151,39 @@ typedef struct {
 	vluint8_t	*dout;
 } as5311_t;
 
+#define SDC_IDLE	0
+#define SDC_RCV		1
+#define SDC_SND_DELAY	2
+#define SDC_SND		3
+typedef struct {
+	vluint8_t	*clk;
+	vluint8_t	*cmd_in;
+	vluint8_t	*cmd_out;
+	vluint8_t	*dat0_in;
+	vluint8_t	*dat1_in;
+	vluint8_t	*dat2_in;
+	vluint8_t	*dat3_in;
+	vluint8_t	*dat0_out;
+	vluint8_t	*dat1_out;
+	vluint8_t	*dat2_out;
+	vluint8_t	*dat3_out;
+	vluint8_t	*cmd_en;
+	vluint8_t	*dat_en;
+	int		last_clk;
+	int		bitcnt;
+	int		cmd_state;
+	uint8_t		cmd_rcv[6];
+	int		cmd_rcv_ready;
+	int		sndbits;
+	uint8_t		sndbuf[17];
+} sd_t;
+
 typedef struct {
 	Vconan		*tb;
 	uart_recv_t	*urp;
 	uart_send_t	*usp;
 	as5311_t	*as5311[NAS5311];
+	sd_t		*sd;
 	uint64_t	last_change;
 	watch_t		*wp;
 	uint64_t	cycle;
@@ -167,6 +197,7 @@ typedef struct {
 
 static void tmcuart_tick(sim_t *sp);
 static void as5311_tick(sim_t *sp);
+static void sd_tick(sim_t *sp);
 static void wait_for_uart_send(sim_t *sp);
 static void fail(const char *msg, ...);
 
@@ -333,6 +364,8 @@ print_value(watch_entry_t *we, int do_color)
 	uint64_t v;
 	int type = vsigs[we->sig].type;
 
+	if (color_disabled)
+		do_color = COLOR_NONE;
 	if (do_color == COLOR_CHANGED && we->cmp)
 		c = C_RED;
 	else if (do_color == COLOR_ALWAYS)
@@ -619,20 +652,44 @@ uart_send_packet(uart_send_t *usp, uint8_t *data, int len)
 	uart_send(usp, packet, len + 5);
 }
 
+/*
+ * num positive: number of parameters
+ * num negative: number of parameters of which the last one is a string
+ */
+static void
+uart_send_vlq_va(sim_t *sp, int num, va_list ap)
+{
+	uint8_t buf[256]; 	/* just enough */
+	uint8_t *p = buf;
+	uint32_t arg;
+	int i;
+	int n = num < 0 ? -num : num;
+
+printf("num %d n %d\n", num, n);
+	for (i = 0; i < n; ++i) {
+		arg = va_arg(ap, uint32_t);
+printf("arg %d\n", arg);
+		p = encode_int(p, arg);
+	}
+	if (num < 0) {
+printf("add string len %d\n", arg);
+		/* arg, the value of the last parameter, is the length of the following string */
+		for (i = 0; i < arg; ++i)
+			*p++ = (uint8_t)va_arg(ap, uint32_t);
+	}
+
+	uart_send_packet(sp->usp, buf, p - buf);
+}
+
 static void
 uart_send_vlq(sim_t *sp, int num, ...)
 {
 	va_list ap;
 	va_start(ap, num);
 
-	uint8_t buf[num * 5];
-	uint8_t *p = buf;
-	int i;
+	uart_send_vlq_va(sp, num, ap);
 
-	for (i = 0; i < num; ++i)
-		p = encode_int(p, va_arg(ap, uint32_t));
-
-	uart_send_packet(sp->usp, buf, p - buf);
+        va_end(ap);
 }
 
 static void
@@ -641,14 +698,11 @@ uart_send_vlq_and_wait(sim_t *sp, int num, ...)
 	va_list ap;
 	va_start(ap, num);
 
+	uart_send_vlq_va(sp, num, ap);
+
+        va_end(ap);
+
 	uint8_t buf[num * 5];
-	uint8_t *p = buf;
-	int i;
-
-	for (i = 0; i < num; ++i)
-		p = encode_int(p, va_arg(ap, uint32_t));
-
-	uart_send_packet(sp->usp, buf, p - buf);
 
 	wait_for_uart_send(sp);
 }
@@ -807,6 +861,7 @@ step(sim_t *sp, uint64_t cycle)
 	timer_tick(sp);
 	tmcuart_tick(sp);
 	as5311_tick(sp);
+	sd_tick(sp);
 
 	/* watch output before test, so we might see failure reasons */
 	do_watch(sp->wp, cycle);
@@ -845,12 +900,13 @@ wait_for_uart_recv(sim_t *sp)
 }
 
 static void
-wait_for_uart_vlq(sim_t *sp, int n, uint32_t *vlq)
+wait_for_uart_vlq(sim_t *sp, int _n, uint32_t *vlq)
 {
 	int ret;
 	int i;
 	int pos = 2;
 	int len;
+	int n = _n > 0 ? _n : -_n ;
 
 	wait_for_uart_recv(sp);
 	len = sp->urp->pos - 5;
@@ -858,6 +914,12 @@ wait_for_uart_vlq(sim_t *sp, int n, uint32_t *vlq)
 		ret = parse_int(sp->urp->buf, pos, len, vlq + i);
 		pos += ret;
 		len -= ret;
+	}
+	if (_n < 0) {
+		for (i = 0; i < vlq[n - 1]; ++i) {
+			vlq[i + n] = sp->urp->buf[pos++];
+			len -= 1;
+		}
 	}
 	if (len != 0) {
 		printf("parsing recv buffer has leftover\n");
@@ -1848,31 +1910,146 @@ test_as5311(sim_t *sp)
 }
 
 static void
+sd_tick(sim_t *sp)
+{
+	sd_t *sd = sp->sd;
+
+	if (sd == NULL)
+		return;
+
+	if (sd->last_clk == *sd->clk)
+		return;
+	sd->last_clk = *sd->clk;
+
+	if (sd->cmd_state == SDC_IDLE && *sd->clk == 1 && (*sd->cmd_en == 0 || *sd->cmd_out == 1))
+		return;
+
+	if (sd->cmd_state == SDC_IDLE && *sd->clk == 1) {
+		sd->bitcnt = 0;
+		memset(sd->cmd_rcv, 0, sizeof(sd->cmd_rcv));
+		sd->cmd_state = SDC_RCV;
+	}
+
+	if (sd->cmd_state == SDC_RCV && *sd->clk == 1) {
+		if (*sd->cmd_en == 0) {
+			printf("sd: cmd recv buf so far: %02x%02x%02x%02x%02x%02x\n",
+				sd->cmd_rcv[0], sd->cmd_rcv[1], sd->cmd_rcv[2],
+				sd->cmd_rcv[3], sd->cmd_rcv[4], sd->cmd_rcv[5]);
+			fail("sd: cmd line disabled during receive at bit %d\n", sd->bitcnt);
+		}
+
+		printf("sd: received cmd bit %d\n", *sd->cmd_out);
+		if (*sd->cmd_out)
+			sd->cmd_rcv[sd->bitcnt / 8] |= 1 << (7 - (sd->bitcnt & 7));
+
+		if (++sd->bitcnt == 48) {
+			printf("sd: received cmd %02x%02x%02x%02x%02x%02x\n",
+				sd->cmd_rcv[0], sd->cmd_rcv[1], sd->cmd_rcv[2],
+				sd->cmd_rcv[3], sd->cmd_rcv[4], sd->cmd_rcv[5]);
+
+			if (sd->cmd_rcv[0] == 0x01 || sd->cmd_rcv[0] == 0x02) {
+				if (sd->cmd_rcv[0] == 0x01) {
+					sd->sndbits = 48;
+					memcpy(sd->sndbuf, "\x31\x42\x53\x64\x75\x86", 6);
+				} else {
+					sd->sndbits = 136;
+					memcpy(sd->sndbuf,
+						"\x13\x24\x35\x46\x57\x68\x79\x8a\x9b\xac\xbd\xce\xdf\xe0\xf1\x02\x13",
+						17);
+				}
+				sd->cmd_state = SDC_SND_DELAY;
+				sd->bitcnt = 0;
+			} else {
+				sd->cmd_state = SDC_IDLE;
+				sd->cmd_rcv_ready = 1;
+			}
+		}
+	} else if (sd->cmd_state == SDC_SND_DELAY && *sd->clk == 0) {
+		if (++sd->bitcnt == 8) {
+			sd->cmd_state = SDC_SND;
+			sd->bitcnt = 0;
+		}
+	} else if (sd->cmd_state == SDC_SND && *sd->clk == 0) {
+		if (sd->bitcnt == sd->sndbits) {
+			sd->cmd_state = SDC_IDLE;
+			*sd->cmd_in = 1;
+		} else {
+#if 0
+printf("send bit %d at cnt %d sndbuf[0]=%02x\n", !!(sd->sndbuf[sd->bitcnt / 8] & (1 << (7 - (sd->bitcnt & 7)))), sd->bitcnt, sd->sndbuf[0]);
+#endif
+			*sd->cmd_in = !!(sd->sndbuf[sd->bitcnt / 8] & (1 << (7 - (sd->bitcnt & 7))));
+			++sd->bitcnt;
+		}
+	}
+}
+
+static void
 test_sd(sim_t *sp)
 {
 	Vconan *tb = sp->tb;
 	int i;
-	uint32_t rsp[5];
+	int j;
+	uint32_t rsp[100];
+	sd_t sd = { 0 };
 
+	sd.clk = &tb->esp_gpio2;
+	sd.cmd_in = &tb->sd_cmd_in;
+	sd.cmd_out = &tb->esp_en;
+	sd.dat0_in = &tb->sd_dat0_in;
+	sd.dat1_in = &tb->sd_dat1_in;
+	sd.dat2_in = &tb->sd_dat2_in;
+	sd.dat3_in = &tb->sd_dat3_in;
+	sd.dat0_out = &tb->esp_tx;
+	sd.dat1_out = &tb->esp_rx;
+	sd.dat2_out = &tb->esp_rst;
+	sd.dat3_out = &tb->esp_flash;
+	sd.cmd_en = &tb->sd_cmd_en_v;
+	sd.dat_en = &tb->sd_dat_en_v;
+
+	*sd.cmd_in = 1;
+	*sd.dat0_in = 1;
+	*sd.dat1_in = 1;
+	*sd.dat2_in = 1;
+	*sd.dat3_in = 1;
+
+#if 0
 	watch_add(sp->wp, "u_command.msg_state$", "msg_state", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_command.str_len$", "str_len", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_command.msg_ready$", "msg_ready", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_command.unit$", "unit", NULL, FORM_DEC, WF_ALL);
+#endif
+#if 0
+	watch_add(sp->wp, "\\.output_start$", "output_start", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "\\.output_elemcnt$", "output_elemcnt", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "unit_invol_req", "ivrq", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "unit_invol_grant", "ivgr", NULL, FORM_DEC, WF_ALL);
+#endif
+
 	watch_add(sp->wp, "u_sd.state$", "sd_state", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_sd.cmd_ready$", "cmdr", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_sd.cmd_len$", "cmd_len", NULL, FORM_DEC, WF_ALL);
-	watch_add(sp->wp, "u_sd_cmd_fifo.ram$", "ram", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.cmdq_empty$", "cq_empty", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_sdc.cmdq_dout$", "cq_dout", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.cmdq_rd_en$", "cq_rd_en", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.cmdq_elemcnt$", "cq_elcnt", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.cq_curr_byte$", "cq_c_byte", NULL, FORM_HEX, WF_ALL);
 #if 0
+	watch_add(sp->wp, "u_sd_cmd_fifo.ram$", "ram", NULL, FORM_HEX, WF_ALL);
 	watch_add(sp->wp, "u_sdc.payload_data", "pl_data", NULL, FORM_HEX, WF_ALL);
 	watch_add(sp->wp, "u_sdc.payload_valid", "pl_valid", NULL, FORM_DEC, WF_ALL);
 #endif
+#if 1
 	watch_add(sp->wp, "u_sdc.cmd_data", "c_data", NULL, FORM_HEX, WF_ALL);
 	watch_add(sp->wp, "u_sdc.cmd_valid", "c_valid", NULL, FORM_HEX, WF_ALL);
 	watch_add(sp->wp, "u_sdc.cmd_full", "c_full", NULL, FORM_HEX, WF_ALL);
-#if 0
+#endif
+#if 1
 	watch_add(sp->wp, "u_sdc.output_data", "o_data", NULL, FORM_HEX, WF_ALL);
-	watch_add(sp->wp, "u_sdc.output_empty", "o_empty", NULL, FORM_HEX, WF_ALL);
-	watch_add(sp->wp, "u_sdc.output_advance", "o_advance", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.output_advance", "o_adv", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.output_elemcnt", "o_elcnt", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sd.out_cnt", "o_cnt", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_sd.param_data", "pd", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sd.param_write", "pw", NULL, FORM_HEX, WF_ALL);
 #endif
 	watch_add(sp->wp, "u_sdc.sd_clk", "clk", NULL, FORM_HEX, WF_ALL);
 	watch_add(sp->wp, "u_sdc.sd_cmd_en", "cmd_en", NULL, FORM_HEX, WF_ALL);
@@ -1881,10 +2058,115 @@ test_sd(sim_t *sp)
 	watch_add(sp->wp, "u_sdc.sd_dat_en", "dat_en", NULL, FORM_HEX, WF_ALL);
 	watch_add(sp->wp, "u_sdc.sd_dat._r", "dat_r", NULL, FORM_HEX, WF_ALL);
 	watch_add(sp->wp, "u_sdc.sd_dat._in", "dat_in", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.cq_state", "cq_state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_sdc.clkdiv", "clkdiv", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.co_data", "co_data", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_sdc.co_wr_en", "co_wr_en", NULL, FORM_HEX, WF_ALL);
+#if 0
+	watch_add(sp->wp, "u_sdc.u_sd_out_fifo.ram", "ramout", NULL, FORM_HEX, WF_ALL);
+#endif
 
-	/* channel, divider, data interval, mag interval */
-	uart_send_vlq_and_wait(sp, 5, CMD_SD_QUEUE, 0, 2, 0x23, 0x45);
-	delay(sp, 100000);
+	sp->sd = &sd;
+
+	/* set clkdiv and enable clock */
+	uart_send_vlq_and_wait(sp, -3, CMD_SD_QUEUE, 0, 3, 0x83, 0x21, 0x90);
+	delay(sp, 100);
+        if (tb->conan__DOT__u_command__DOT__u_sd__DOT__gensd__BRA__0__KET____DOT__u_sdc__DOT__clkdiv != 0x321)
+		fail("failed to set clkdiv\n");
+	/* TODO: test clock divider */
+	/* disable clock, set clkdiv to 120 and enable clock */
+	uart_send_vlq_and_wait(sp, -3, CMD_SD_QUEUE, 0, 4, 0xa0, 0x80, 120, 0x90);
+	delay(sp, 100);
+        if (tb->conan__DOT__u_command__DOT__u_sd__DOT__gensd__BRA__0__KET____DOT__u_sdc__DOT__clkdiv != 120)
+		fail("failed to set clkdiv to 120\n");
+
+	for (i = 0; i < 2; ++i) {
+		uart_send_vlq_and_wait(sp, -3, CMD_SD_QUEUE, 0, 7, 0x10, 0x11, 0x22, 0x33, 0x44, 0x55, 0x67);
+
+		while (sd.cmd_rcv_ready == 0)
+			yield(sp);
+		sd.cmd_rcv_ready = 1;
+
+		if (memcmp(sd.cmd_rcv, "\x11\x22\x33\x44\x55\x67", 6) != 0)
+			fail("failed to received correct command\n");
+	}
+
+	for (i = 0; i < 2; ++i) {
+		/* send with 48 bit response */
+		uart_send_vlq_and_wait(sp, -3, CMD_SD_QUEUE, 0, 7, 0x11, 0x01, 0x22, 0x33, 0x44, 0x55, 0x67);
+
+		wait_for_uart_vlq(sp, -3, rsp);
+
+		for (j = 0; j < 10; ++j)
+			printf("%x ", rsp[j]);
+		printf("\n");
+
+		if (rsp[0] != RSP_SD_CMDQ)
+			fail("read sd 48 bit cmd\n");
+		if (rsp[1] != 0)
+			fail("rsp len not 48 bit (signalled)\n");
+		if (rsp[2] != 7)
+			fail("bad rsp strlen\n");
+		if (rsp[3] != 0x11)
+			fail("bad rsp cmd\n");
+		if (rsp[4] != 0x31 || rsp[5] != 0x42 || rsp[6] != 0x53 ||
+		    rsp[7] != 0x64 || rsp[8] != 0x75 || rsp[9] != 0x86)
+			fail("bad cmd data received\n");
+
+		delay(sp, 1000);
+	}
+
+	for (i = 0; i < 2; ++i) {
+		/* send with 136 bit response */
+		uart_send_vlq_and_wait(sp, -3, CMD_SD_QUEUE, 0, 7, 0x12, 0x02, 0x22, 0x33, 0x44, 0x55, 0x67);
+
+		delay(sp, 1000);
+		wait_for_uart_vlq(sp, -3, rsp);
+
+		for (j = 0; j < 20; ++j)
+			printf("%x ", rsp[j]);
+		printf("\n");
+
+		if (rsp[0] != RSP_SD_CMDQ)
+			fail("read sd 48 bit cmd\n");
+		if (rsp[1] != 0)
+			fail("rsp len not 48 bit (signalled)\n");
+		if (rsp[2] != 18)
+			fail("bad rsp strlen\n");
+		if (rsp[3] != 0x12)
+			fail("bad rsp cmd\n");
+		if (rsp[4] != 0x13 || rsp[5] != 0x24 || rsp[6] != 0x35 ||
+		    rsp[7] != 0x46 || rsp[8] != 0x57 || rsp[9] != 0x68 ||
+		    rsp[10] != 0x79 || rsp[11] != 0x8a || rsp[12] != 0x9b ||
+		    rsp[13] != 0xac || rsp[14] != 0xbd || rsp[15] != 0xce ||
+		    rsp[16] != 0xdf || rsp[17] != 0xe0 || rsp[18] != 0xf1 ||
+		    rsp[19] != 0x02 || rsp[20] != 0x13)
+			fail("bad cmd data received (2)\n");
+
+		delay(sp, 1000);
+	}
+
+	for (i = 0; i < 2; ++i) {
+		uart_send_vlq_and_wait(sp, -3, CMD_SD_QUEUE, 0, 7, 0x11, 0x11, 0x22, 0x33, 0x44, 0x55, 0x67);
+
+		delay(sp, 1000);
+		wait_for_uart_vlq(sp, -3, rsp);
+
+		for (j = 0; j < 4; ++j)
+			printf("%x ", rsp[j]);
+		printf("\n");
+
+		if (rsp[0] != RSP_SD_CMDQ)
+			fail("read sd timeout cmd\n");
+		if (rsp[1] != 0)
+			fail("rsp len not 48 bit (signalled)\n");
+		if (rsp[2] != 1)
+			fail("bad rsp strlen\n");
+		if (rsp[3] != 0x1f)
+			fail("bad rsp cmd (not timeout)\n");
+	}
+
+	sp->sd = NULL;
 }
 
 static void
@@ -1894,10 +2176,10 @@ test(sim_t *sp)
 
 	test_time(sp);	/* always needed as time sync */
 	test_version(sp);
-#if 0
+#if 1
 	test_sd(sp);
 #endif
-#if 1
+#if 0
 	test_pwm(sp);
 	test_tmcuart(sp);
 	test_gpio(sp);

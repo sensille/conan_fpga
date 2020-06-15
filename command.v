@@ -537,7 +537,6 @@ reg [34:0] rcv_param = 0;
 reg [STRLEN-1:0] curr_cnt;	/* counter for VLQ */
 reg [7:0] rsp_len = 0;
 reg string_arg = 0;
-reg send_str;
 /* assume max string is 64 */
 reg [STRLEN-1:0] str_len = 0;
 
@@ -674,18 +673,23 @@ always @(posedge clk) begin
 		/* extend by 3 bits, 32+3 == 5 * 7 */
 		rcv_param <= { params[curr_param][31], params[curr_param][31],
 				params[curr_param][31], params[curr_param] };
-		send_str <= 0;
 		msg_state <= MST_PARAM_SKIP;
 	end else if (msg_state == MST_PARAM && params[curr_param][32]) begin
 		/*
-		 * encode string
+		 * send unencoded as byte
 		 */
-		curr_cnt <= params[curr_param][STRLEN-1:0];
-		send_ring_data <= params[curr_param][STRLEN-1:0];
+		send_ring_data <= params[curr_param][7:0];
 		send_ring_wr_en <= 1;
 		rsp_len <= rsp_len + 1;
-		send_str <= 1;
-		msg_state <= MST_PARAM_SEND;
+		curr_cnt <= curr_cnt - 1;
+		rcv_param <= { rcv_param[27:0], 7'b0 };
+		if (curr_param + 1 != nparams) begin
+			curr_param <= curr_param + 1;
+		end else begin
+			send_fifo_data <= rsp_len + 1;
+			send_fifo_wr_en <= 1;
+			msg_state <= MST_IDLE;
+		end
 	end else if (msg_state == MST_PARAM_SKIP) begin
 		if (curr_cnt != 1 &&
 		    (rcv_param[34:26] == 9'b111111111 ||
@@ -709,10 +713,7 @@ always @(posedge clk) begin
 		end else begin
 			send_ring_data[7] <= 1'b1;
 		end
-		if (send_str)
-			send_ring_data <= params[curr_param];
-		else
-			send_ring_data[6:0] <= rcv_param[34:28];
+		send_ring_data[6:0] <= rcv_param[34:28];
 		send_ring_wr_en <= 1;
 		rsp_len <= rsp_len + 1;
 		curr_cnt <= curr_cnt - 1;

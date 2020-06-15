@@ -50,19 +50,22 @@ module sd #(
 */
 
 localparam NSD_BITS = $clog2(NSD) ? $clog2(NSD) : 1;
+localparam DOUT_ADDR_BITS = 11; /* one BRAM */
 reg [NSD_BITS-1:0] channel = 0;
 
 wire [7:0] sd_cmd_data = arg_data[7:0];
 reg [NSD-1:0] sd_cmd_valid = 0;
 wire [NSD-1:0] sd_cmd_full;
 wire [7:0] sd_output_data[NSD];
-wire [NSD-1:0] sd_output_empty;
+wire [DOUT_ADDR_BITS-1:0] sd_output_elemcnt[NSD];
 reg [NSD-1:0] sd_output_advance = 0;
+wire [NSD-1:0] sd_output_start;
 genvar gi;
 generate
 	for (gi = 0; gi < NSD; gi = gi + 1) begin : gensd
 		sdc #(
-			.HZ(HZ)
+			.HZ(HZ),
+			.DOUT_ADDR_BITS(DOUT_ADDR_BITS)
 		) u_sdc (
 			.clk(clk),
 			.payload_data(),
@@ -71,7 +74,8 @@ generate
 			.cmd_valid(sd_cmd_valid[gi]),
 			.cmd_full(sd_cmd_full[gi]),
 			.output_data(sd_output_data[gi]),
-			.output_empty(sd_output_empty[gi]),
+			.output_elemcnt(sd_output_elemcnt[gi]),
+			.output_start(sd_output_start[gi]),
 			.output_advance(sd_output_advance[gi]),
 
 			/* SD card signals */
@@ -95,16 +99,27 @@ endgenerate
 localparam PS_IDLE			= 0;
 localparam PS_SD_QUEUE_1		= 1;
 localparam PS_SD_QUEUE_2		= 2;
-localparam PS_MAX			= 2;
+localparam PS_WAIT_GRANT		= 3;
+localparam PS_SD_OUT_1			= 4;
+localparam PS_SD_OUT_2			= 5;
+localparam PS_SD_OUT_3			= 6;
+localparam PS_SD_OUT_4			= 7;
+localparam PS_SD_OUT_5			= 8;
+localparam PS_SD_OUT_6			= 9;
+localparam PS_MAX			= 9;
 
 localparam PS_BITS= $clog2(PS_MAX + 1);
 reg [PS_BITS-1:0] state = 0;
 reg [6:0] cmd_len; /* counter for string len */
+reg [DOUT_ADDR_BITS-1:0] out_cnt;
 
+integer i;
 always @(posedge clk) begin
 	cmd_done <= 0;
 	sd_cmd_valid <= 0;
-	arg_advance = 1;
+	arg_advance <= 1;
+	sd_output_advance <= 0;
+	param_write <= 0;
 	if (state == PS_IDLE && cmd_ready) begin
 		// common to all cmds
 		channel <= arg_data[NSD_BITS-1:0];
@@ -115,6 +130,7 @@ always @(posedge clk) begin
 		end
 	end else if (state == PS_SD_QUEUE_1) begin
 		cmd_len <= arg_data;
+		arg_advance <= 0;
 		state <= PS_SD_QUEUE_2;
 	end else if (state == PS_SD_QUEUE_2) begin
 		if (cmd_len == 0) begin
@@ -124,39 +140,50 @@ always @(posedge clk) begin
 			cmd_len <= cmd_len - 1;
 			sd_cmd_valid[channel] <= 1;
 		end
-`ifdef notyet
-	end else if (state == PS_IDLE && data_valid) begin
+	end else if (state == PS_IDLE && sd_output_start) begin
 		invol_req <= 1;
 		state <= PS_WAIT_GRANT;
 	end else if (state == PS_WAIT_GRANT && invol_grant) begin
 		invol_req <= 0;
 		for (i = 0; i < NSD; i = i + 1) begin
-			if (data_valid[i]) begin
+			if (sd_output_start[i]) begin
 				channel <= i;
-				state <= PS_SD_DATA_1;
-				i = NSD;
+				state <= PS_SD_OUT_1;
+				i = NSD;	/* break */
 			end
 		end
-	end else if (state == PS_SD_DATA_1) begin
+	end else if (state == PS_SD_OUT_1) begin
 		param_data <= channel;
 		param_write <= 1;
-		state <= PS_SD_DATA_2;
-	end else if (state == PS_SD_DATA_2) begin
-		param_data <= starttime[channel];
-		state <= PS_SD_DATA_3;
-	end else if (state == PS_SD_DATA_3) begin
-		param_data <= data[channel];
-		state <= PS_SD_DATA_4;
-	end else if (state == PS_SD_DATA_4) begin
-		param_data <= bits[channel];
-		state <= PS_SD_DATA_5;
-		data_ack[channel] <= 1;
-	end else if (state == PS_SD_DATA_5) begin
+		if (sd_output_elemcnt[channel] > 64)
+			out_cnt <= 64;
+		else
+			out_cnt <= sd_output_elemcnt[channel];
+		state <= PS_SD_OUT_2;
+	end else if (state == PS_SD_OUT_2) begin
+		param_data <= { 1'b1, { 32 - DOUT_ADDR_BITS { 1'b0 }}, out_cnt };
+		param_write <= 1;
+		state <= PS_SD_OUT_3;
+	end else if (state == PS_SD_OUT_3) begin
+		/* wait for data */
+		state <= PS_SD_OUT_4;
+	end else if (state == PS_SD_OUT_4) begin
+		/* wait for data */
+		state <= PS_SD_OUT_5;
+	end else if (state == PS_SD_OUT_5) begin
+		if (out_cnt == 0) begin
+			state <= PS_SD_OUT_6;
+		end else begin
+			param_data <= { 25'h1000000, sd_output_data[channel] };
+			param_write <= 1;
+			sd_output_advance[channel] <= 1;
+			out_cnt <= out_cnt - 1;
+			state <= PS_SD_OUT_3;
+		end
+	end else if (state == PS_SD_OUT_6) begin
 		cmd_done <= 1;
-		param_write <= 0;
-		param_data <= RSP_SD_DATA;
+		param_data <= RSP_SD_CMDQ;
 		state <= PS_IDLE;
-`endif
 	end
 end
 

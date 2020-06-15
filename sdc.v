@@ -5,7 +5,8 @@
  * SD Card controller base
  */
 module sdc #(
-	parameter HZ = 0
+	parameter HZ = 0,
+	parameter DOUT_ADDR_BITS = 0
 ) (
 	input wire clk,
 
@@ -20,19 +21,20 @@ module sdc #(
 
 	/* output queue */
 	output wire [7:0] output_data,
-	output wire output_empty,
+	output wire [DOUT_ADDR_BITS-1:0] output_elemcnt,
+	output wire output_start,
 	input wire output_advance,
 
 	/* SD card signals */
 	output reg sd_clk,
 	output reg sd_cmd_en = 0,
-	output reg sd_cmd_r,
+	output reg sd_cmd_r = 1,
 	input wire sd_cmd_in,
 	output reg sd_dat_en = 0,
-	output reg sd_dat0_r,
-	output reg sd_dat1_r,
-	output reg sd_dat2_r,
-	output reg sd_dat3_r,
+	output reg sd_dat0_r = 1,
+	output reg sd_dat1_r = 1,
+	output reg sd_dat2_r = 1,
+	output reg sd_dat3_r = 1,
 	input wire sd_dat0_in,
 	input wire sd_dat1_in,
 	input wire sd_dat2_in,
@@ -54,7 +56,7 @@ always @(posedge clk) begin
 	sd_clk_sample <= 0;
 	if (clken == 0) begin
 		/* disabled, do nothing */
-	end else if (clk_cnt == 0) begin
+	end else if (clk_cnt == 1) begin
 		sd_clk <= !sd_clk;
 		if (sd_clk == 0)
 			sd_clk_out <= 1;
@@ -217,30 +219,59 @@ fifo #(
 	.elemcnt(cmdq_elemcnt)
 );
 
+/*
+ * output queue
+ */
+reg [7:0] co_data;
+reg co_wr_en;
+wire co_full;
+fifo #(
+	.DATA_WIDTH(8),
+	.ADDR_WIDTH(DOUT_ADDR_BITS)
+) u_sd_out_fifo (
+	.clk(clk),
+	.clr(0),
+
+	/* write side */
+	.din(co_data),
+	.wr_en(co_wr_en),
+	.full(co_full),
+
+	/* read side */
+	.dout(output_data),
+	.rd_en(output_advance),
+	.empty(),
+
+	/* status */
+	.elemcnt(output_elemcnt)
+);
+
 localparam CQ_IDLE		= 0;
-localparam CQ_SET_CLKDIV_1	= 1;
-localparam CQ_SET_CLKDIV_2	= 2;
-localparam CQ_SEND_CMD_0	= 3;
-localparam CQ_SEND_CMD_1	= 4;
-localparam CQ_SEND_CMD_2	= 5;
-localparam CQ_SEND_CMD_3	= 6;
-localparam CQ_SEND_CMD_4	= 7;
-localparam CQ_SEND_CMD_5	= 8;
-localparam CQ_SEND_CMD_6	= 9;
-localparam CQ_MAX		= 9;
+localparam CQ_SET_CLKDIV_0	= 1;
+localparam CQ_SET_CLKDIV_1	= 2;
+localparam CQ_SET_CLKDIV_2	= 3;
+localparam CQ_SEND_CMD_0	= 4;
+localparam CQ_SEND_CMD_1	= 5;
+localparam CQ_SEND_CMD_2	= 6;
+localparam CQ_SEND_CMD_3	= 7;
+localparam CQ_SEND_CMD_4	= 8;
+localparam CQ_SEND_CMD_5	= 9;
+localparam CQ_SEND_CMD_6	= 10;
+localparam CQ_IDLE_DELAY_1	= 11;
+localparam CQ_IDLE_DELAY_2	= 12;
+localparam CQ_SEND_CMD_1B	= 13; /* XXX TODO */
+localparam CQ_MAX		= 13;
 localparam CQ_BITS = $clog2(CQ_MAX + 1);
 reg [CQ_BITS-1:0] cq_state = CQ_IDLE;
 reg [3:0] cq_xxxx; /* generic register to save lower half of cmd */
 reg [2:0] cq_bit_cnt;
 reg [9:0] cq_byte_cnt;
-reg [7:0] co_data;
-reg co_wr_en;
 reg [7:0] cq_curr_byte;
 reg [TIMEOUT_BITS-1:0] cq_timeout;
 always @(posedge clk) begin
 	cmdq_rd_en <= 0;
 	co_wr_en <= 0;
-	if (cq_state == CQ_IDLE && !cmdq_empty) begin
+	if (cq_state == CQ_IDLE && !cmdq_empty && !cmdq_rd_en) begin
 		cmdq_rd_en <= 1;
 		cq_xxxx <= cmdq_dout[3:0];
 		case (cmdq_dout[7:4])
@@ -255,7 +286,7 @@ always @(posedge clk) begin
 			 */
 			cq_state <= CQ_SEND_CMD_0;
 			cq_byte_cnt <= 5;
-			sd_cmd_en <= 0;
+			sd_cmd_en <= 1;
 		end
 		4'b0010: begin
 			/*
@@ -296,19 +327,21 @@ always @(posedge clk) begin
 			 *     12'x clkdiv
 			 */
 			clkdiv[11:8] <= cmdq_dout[3:0];
-			cq_state <= CQ_SET_CLKDIV_1;
+			cq_state <= CQ_SET_CLKDIV_0;
 		end
 		4'b1001: begin
 			/*
 			 * start clk             10010000
 			 */
 			clken <= 1;
+			cq_state <= CQ_IDLE_DELAY_1;
 		end
 		4'b1010: begin
 			/*
 			 * stop clk              10100000
 			 */
 			clken <= 0;
+			cq_state <= CQ_IDLE_DELAY_1;
 		end
 		default: begin
 			/*
@@ -318,19 +351,34 @@ always @(posedge clk) begin
 			cmdq_rd_en <= 0;
 		end
 		endcase
+	/*
+	 * set clkdiv
+	 */
+	end else if (cq_state == CQ_SET_CLKDIV_0) begin
+		/* delay for cq data */
+		cq_state <= CQ_SET_CLKDIV_1;
 	end else if (cq_state == CQ_SET_CLKDIV_1) begin
-		/* delay state for new data */
+		/* delay for cq data */
 		cq_state <= CQ_SET_CLKDIV_2;
 	end else if (cq_state == CQ_SET_CLKDIV_2) begin
-		clkdiv[7:0] <= cmdq_dout;
-		cq_state <= CQ_IDLE;
+		/* wait for data to be available */
+		if (!cmdq_empty) begin
+			clkdiv[7:0] <= cmdq_dout;
+			cmdq_rd_en <= 1;
+			cq_state <= CQ_IDLE_DELAY_1;
+		end
+	/*
+	 * cmd send/recv
+	 */
 	end else if (cq_state == CQ_SEND_CMD_0) begin
 		/* wait for all data to be available */
-		if (cmdq_elemcnt >= 7) begin
-			cmdq_rd_en <= 1;
+		if (cmdq_elemcnt >= 6) begin
 			cq_state <= CQ_SEND_CMD_1;
 		end
 	end else if (cq_state == CQ_SEND_CMD_1) begin
+		/* delay slot to get data */
+		cq_state <= CQ_SEND_CMD_1B;
+	end else if (cq_state == CQ_SEND_CMD_1B) begin
 		/* delay slot to get data */
 		cq_state <= CQ_SEND_CMD_2;
 	end else if (cq_state == CQ_SEND_CMD_2) begin
@@ -338,7 +386,6 @@ always @(posedge clk) begin
 		cq_curr_byte <= cmdq_dout;
 		cq_state <= CQ_SEND_CMD_3;
 		cq_bit_cnt <= 7;
-		cmdq_rd_en <= 1;
 	end else if (cq_state == CQ_SEND_CMD_3 && sd_clk_out == 1) begin
 		/* send one bit */
 		sd_cmd_r <= cq_curr_byte[7];
@@ -349,9 +396,10 @@ always @(posedge clk) begin
 			cq_state <= CQ_SEND_CMD_4;
 		end else begin
 			cq_byte_cnt <= cq_byte_cnt - 1;
-			cq_state <= CQ_SEND_CMD_2;
+			cmdq_rd_en <= 1;
+			cq_state <= CQ_SEND_CMD_1;
 		end
-	end else if (cq_state == CQ_SEND_CMD_4) begin
+	end else if (cq_state == CQ_SEND_CMD_4 && sd_clk_out == 1) begin
 		/* send finished */
 		sd_cmd_en <= 0;
 		if (cq_xxxx == 4'b0001) begin
@@ -364,7 +412,7 @@ always @(posedge clk) begin
 			cq_state <= CQ_SEND_CMD_5;
 		end else begin
 			/* no response */
-			cq_state <= CQ_IDLE;
+			cq_state <= CQ_IDLE_DELAY_1;
 			cmdq_rd_en <= 1;
 		end
 	end else if (cq_state == CQ_SEND_CMD_5 && sd_clk_sample) begin
@@ -372,7 +420,7 @@ always @(posedge clk) begin
 		if (cq_timeout == 0) begin
 			co_data <= 8'b00011111;
 			co_wr_en <= 1;
-			cq_state <= CQ_IDLE;
+			cq_state <= CQ_IDLE_DELAY_1;
 		end else if (sd_cmd_in == 0) begin
 			cq_bit_cnt <= 6;
 			cq_curr_byte[0] <= 0;
@@ -389,14 +437,26 @@ always @(posedge clk) begin
 			cq_bit_cnt <= cq_bit_cnt - 1;
 		end else begin
 			cq_bit_cnt <= 7;
-			co_data <= cq_curr_byte;
+			co_data <= { cq_curr_byte[6:0], sd_cmd_in };
 			co_wr_en <= 1;
 			cq_byte_cnt <= cq_byte_cnt - 1;
 			if (cq_byte_cnt == 0) begin
-				cq_state <= CQ_IDLE;
+				cq_state <= CQ_IDLE_DELAY_1;
 			end
 		end
+	/*
+	 * wait states before going to idle
+	 */
+	end else if (cq_state == CQ_IDLE_DELAY_1) begin
+		cq_state <= CQ_IDLE_DELAY_2;
+	end else if (cq_state == CQ_IDLE_DELAY_2) begin
+		cq_state <= CQ_IDLE;
 	end
 end
+
+/*
+ * signal that it is a good idea to send the data
+ */
+assign output_start = output_elemcnt >= 32 | (output_elemcnt && cq_state == CQ_IDLE);
 
 endmodule

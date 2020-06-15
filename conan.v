@@ -106,7 +106,15 @@ module conan #(
 	output wire esp_gpio2,
 	inout wire esp_flash,
 	inout reg esp_rx,
-
+`ifdef VERILATOR
+	input wire sd_cmd_in,
+	input wire sd_dat0_in,
+	input wire sd_dat1_in,
+	input wire sd_dat2_in,
+	input wire sd_dat3_in,
+	output wire sd_cmd_en_v,
+	output wire sd_dat_en_v,
+`endif
 	output wire drclk,
 	output wire enn,
 	inout wire uart1,
@@ -303,13 +311,15 @@ wire [NAS5311-1:0] as5311_do;
 
 wire [NSD-1:0] sd_clk;
 wire [NSD-1:0] sd_cmd_en;
-wire [NSD-1:0] sd_cmd_in;
-wire [NSD-1:0] sd_cmd_r;
 wire [NSD-1:0] sd_dat_en;
+`ifndef VERILATOR
+wire [NSD-1:0] sd_cmd_in;
 reg [NSD-1:0] sd_dat0_in;
 reg [NSD-1:0] sd_dat1_in;
 reg [NSD-1:0] sd_dat2_in;
 reg [NSD-1:0] sd_dat3_in;
+`endif
+wire [NSD-1:0] sd_cmd_r;
 wire [NSD-1:0] sd_dat0_r;
 wire [NSD-1:0] sd_dat1_r;
 wire [NSD-1:0] sd_dat2_r;
@@ -637,11 +647,17 @@ always @(*) begin: sdmux
 	esp_rx = sd_dat_en[0] ? sd_dat1_r[0] : 1'bZ;
 	esp_rst = sd_dat_en[0] ? sd_dat2_r[0] : 1'bZ;
 	esp_flash = sd_dat_en[0] ? sd_dat3_r[0] : 1'bZ;
+`ifndef VERILATOR
 	sd_dat0_in = esp_tx;
 	sd_dat1_in = esp_rx;
 	sd_dat2_in = esp_rst;
 	sd_dat3_in = esp_flash;
+`endif
 end
+`ifdef VERILATOR
+assign sd_cmd_en_v = sd_cmd_en[0];
+assign sd_dat_en_v = sd_dat_en[0];
+`endif
 
 /*
  * direct output for scope debugging
