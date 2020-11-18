@@ -1994,14 +1994,14 @@ test_sd(sim_t *sp)
 
 	sd.clk = &tb->esp_gpio2;
 	sd.cmd_in = &tb->sd_cmd_in;
-	sd.cmd_out = &tb->esp_en;
+	sd.cmd_out = &tb->esp_rst;
 	sd.dat0_in = &tb->sd_dat0_in;
 	sd.dat1_in = &tb->sd_dat1_in;
 	sd.dat2_in = &tb->sd_dat2_in;
 	sd.dat3_in = &tb->sd_dat3_in;
-	sd.dat0_out = &tb->esp_tx;
-	sd.dat1_out = &tb->esp_rx;
-	sd.dat2_out = &tb->esp_rst;
+	sd.dat0_out = &tb->esp_en;
+	sd.dat1_out = &tb->esp_tx;
+	sd.dat2_out = &tb->esp_rx;
 	sd.dat3_out = &tb->esp_flash;
 	sd.cmd_en = &tb->sd_cmd_en_v;
 	sd.dat_en = &tb->sd_dat_en_v;
@@ -2018,7 +2018,7 @@ test_sd(sim_t *sp)
 	watch_add(sp->wp, "u_command.msg_ready$", "msg_ready", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_command.unit$", "unit", NULL, FORM_DEC, WF_ALL);
 #endif
-#if 0
+#if 1
 	watch_add(sp->wp, "\\.output_start$", "output_start", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "\\.output_elemcnt$", "output_elemcnt", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "unit_invol_req", "ivrq", NULL, FORM_DEC, WF_ALL);
@@ -2179,7 +2179,7 @@ test(sim_t *sp)
 #if 1
 	test_sd(sp);
 #endif
-#if 0
+#if 1
 	test_pwm(sp);
 	test_tmcuart(sp);
 	test_gpio(sp);

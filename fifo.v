@@ -24,7 +24,7 @@ module fifo #(
 	output reg empty = 1,
 
 	// status
-	output wire [ADDR_WIDTH - 1 : 0] elemcnt
+	output reg [ADDR_WIDTH - 1 : 0] elemcnt
 );
 
 localparam ADDRS = 1 << ADDR_WIDTH;

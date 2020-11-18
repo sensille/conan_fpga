@@ -31,10 +31,10 @@ module conan #(
 	output wire exp2_16,
 	output wire exp2_15,
 
-	input wire exp2_14,
-	input wire exp2_13,
-	input wire exp2_12,
-	input wire exp2_11,
+	output wire exp2_14,
+	output wire exp2_13,
+	output wire exp2_12,
+	output wire exp2_11,
 	output wire exp2_10,
 	output wire exp2_9,
 	input wire exp2_8,
@@ -74,9 +74,9 @@ module conan #(
 	input wire pmod2_3,
 	input wire pmod2_4,
 
-	input wire display1,
+	output wire display1,
 	input wire display2,
-	input wire display3,
+	output wire display3,
 	input wire display4,
 	input wire display5,
 	input wire display6,
@@ -103,8 +103,8 @@ module conan #(
 	inout reg esp_tx,
 	inout reg esp_en,
 	inout reg esp_rst,
-	output wire esp_gpio2,
-	inout wire esp_flash,
+	output reg esp_gpio2,
+	inout reg esp_flash,
 	inout reg esp_rx,
 `ifdef VERILATOR
 	input wire sd_cmd_in,
@@ -313,7 +313,7 @@ wire [NSD-1:0] sd_clk;
 wire [NSD-1:0] sd_cmd_en;
 wire [NSD-1:0] sd_dat_en;
 `ifndef VERILATOR
-wire [NSD-1:0] sd_cmd_in;
+reg [NSD-1:0] sd_cmd_in;
 reg [NSD-1:0] sd_dat0_in;
 reg [NSD-1:0] sd_dat1_in;
 reg [NSD-1:0] sd_dat2_in;
@@ -642,15 +642,16 @@ assign ldata[63:48] = step_debug;
  */
 always @(*) begin: sdmux
 	esp_gpio2 = sd_clk[0];
-	esp_en = sd_cmd_en[0] ? sd_cmd_r[0] : 1'bZ;
-	esp_tx = sd_dat_en[0] ? sd_dat0_r[0] : 1'bZ;
-	esp_rx = sd_dat_en[0] ? sd_dat1_r[0] : 1'bZ;
-	esp_rst = sd_dat_en[0] ? sd_dat2_r[0] : 1'bZ;
+	esp_rst = sd_cmd_en[0] ? sd_cmd_r[0] : 1'bZ;
+	esp_en = sd_dat_en[0] ? sd_dat0_r[0] : 1'bZ;
+	esp_tx = sd_dat_en[0] ? sd_dat1_r[0] : 1'bZ;
+	esp_rx = sd_dat_en[0] ? sd_dat2_r[0] : 1'bZ;
 	esp_flash = sd_dat_en[0] ? sd_dat3_r[0] : 1'bZ;
 `ifndef VERILATOR
-	sd_dat0_in = esp_tx;
-	sd_dat1_in = esp_rx;
-	sd_dat2_in = esp_rst;
+	sd_cmd_in = esp_rst;
+	sd_dat0_in = esp_en;
+	sd_dat1_in = esp_tx;
+	sd_dat2_in = esp_rx;
 	sd_dat3_in = esp_flash;
 `endif
 end
@@ -670,5 +671,15 @@ assign esp_gpio2 = pwm11;
 assign exp2_9 = step6;
 assign exp2_10 = dir6;
 `endif
+
+assign exp2_9 = esp_gpio2;
+assign exp2_10 = esp_rst;
+assign exp2_11 = esp_en;
+assign exp2_12 = esp_tx;
+assign exp2_13 = esp_rx;
+assign exp2_14 = esp_flash;
+
+assign display1 = fpga1;
+assign display3 = fpga2;
 
 endmodule

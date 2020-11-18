@@ -112,6 +112,7 @@ localparam PS_BITS= $clog2(PS_MAX + 1);
 reg [PS_BITS-1:0] state = 0;
 reg [6:0] cmd_len; /* counter for string len */
 reg [DOUT_ADDR_BITS-1:0] out_cnt;
+reg [NSD-1:0] latched_output_start = 0;
 
 integer i;
 always @(posedge clk) begin
@@ -143,10 +144,11 @@ always @(posedge clk) begin
 	end else if (state == PS_IDLE && sd_output_start) begin
 		invol_req <= 1;
 		state <= PS_WAIT_GRANT;
+		latched_output_start <= sd_output_start;
 	end else if (state == PS_WAIT_GRANT && invol_grant) begin
 		invol_req <= 0;
 		for (i = 0; i < NSD; i = i + 1) begin
-			if (sd_output_start[i]) begin
+			if (latched_output_start[i]) begin
 				channel <= i;
 				state <= PS_SD_OUT_1;
 				i = NSD;	/* break */
@@ -187,14 +189,18 @@ always @(posedge clk) begin
 	end
 end
 
-`ifdef notyet
-assign debug[0] = data_valid[0];
-assign debug[1] = data_ack[0];
-assign debug[2] = dr_state[0];
-assign debug[4:3] = dr_state[0];
-assign debug[7:5] = state;
-assign debug[8] = data[0][7:0];
-assign debug[15:9] = 0;
-`endif
+reg grant_seen = 0;
+always @(posedge clk) begin
+	if (invol_grant)
+		grant_seen <= 1;
+end
+
+assign debug[3:0] = state;
+assign debug[10:4] = sd_output_elemcnt[0];
+assign debug[11] = latched_output_start;
+assign debug[12] = grant_seen;
+assign debug[13] = invol_req;
+assign debug[14] = invol_grant;
+assign debug[15] = sd_output_start[0];
 
 endmodule

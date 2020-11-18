@@ -79,7 +79,7 @@ localparam PS_AS5311_DATA_5	= 9;
 localparam PS_MAX		= 9;
 
 localparam PS_BITS= $clog2(PS_MAX + 1);
-reg [PS_BITS-1:0] state;
+reg [PS_BITS-1:0] state = PS_IDLE;
 
 localparam AS_IDLE		= 0;
 localparam AS_CS_LO		= 1;

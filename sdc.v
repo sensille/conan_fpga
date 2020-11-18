@@ -59,9 +59,9 @@ always @(posedge clk) begin
 	end else if (clk_cnt == 1) begin
 		sd_clk <= !sd_clk;
 		if (sd_clk == 0)
-			sd_clk_out <= 1;
-		else
 			sd_clk_sample <= 1;
+		else
+			sd_clk_out <= 1;
 		clk_cnt <= clkdiv;
 	end else begin
 		clk_cnt <= clk_cnt - 1;
@@ -91,7 +91,7 @@ reg dat_recv_start_512 = 0;
 reg dat_buf_ready = 0;
 reg [DAT_STATUS_BITS-1:0] dat_status;
 reg [7:0] dat_buf [DAT_BUF_SIZE];
-reg [TIMEOUT_BITS-1:0] dat_timeout;
+reg [TIMEOUT_BITS-1:0] dat_timeout = 100;
 
 localparam DS_IDLE		= 0;
 localparam DS_WAIT_FOR_START	= 1;
@@ -308,6 +308,13 @@ always @(posedge clk) begin
 			 *     xxxx = 0010 512 byte + crc
 			 *     receive is in background
 			 */
+/*
+// xxx start reception here
+// xxx block/loop if machine is still busy
+*/
+			dat_recv_start_512 <= 1;
+			cmdq_rd_en <= 1;
+			cq_state <= CQ_IDLE_DELAY_1;
 		end
 		4'b0101: begin
 			/*
@@ -402,6 +409,7 @@ always @(posedge clk) begin
 	end else if (cq_state == CQ_SEND_CMD_4 && sd_clk_out == 1) begin
 		/* send finished */
 		sd_cmd_en <= 0;
+		cmdq_rd_en <= 1;
 		if (cq_xxxx == 4'b0001) begin
 			cq_byte_cnt <= 5;
 			cq_timeout <= 100; /* XXX */
@@ -413,7 +421,6 @@ always @(posedge clk) begin
 		end else begin
 			/* no response */
 			cq_state <= CQ_IDLE_DELAY_1;
-			cmdq_rd_en <= 1;
 		end
 	end else if (cq_state == CQ_SEND_CMD_5 && sd_clk_sample) begin
 		/* wait for start bit */
@@ -451,7 +458,12 @@ always @(posedge clk) begin
 		cq_state <= CQ_IDLE_DELAY_2;
 	end else if (cq_state == CQ_IDLE_DELAY_2) begin
 		cq_state <= CQ_IDLE;
+/*
+	end else if (cq_state == CQ_IDLE && dat_buf_ready_latched) begin
+		xxx copy dat buf to queue
+*/
 	end
+// xxx if dat_buf_ready set own flag
 end
 
 /*
