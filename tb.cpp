@@ -429,8 +429,10 @@ do_watch(watch_t *wp, uint64_t cycle)
 	int header_done;
 	void *v;
 
+#if 0
 	if (cycle - wp->last_cycle > 1000000)
 		fail("abort due to inactivity\n");
+#endif
 
 	/*
 	 * compare signals
@@ -1065,16 +1067,32 @@ test_pwm(sim_t *sp)
 	int i;
 
 	watch_add(sp->wp, "pwm1$", "p1", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "on_ticks$", "on", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "off_ticks$", "off", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "scheduled$", "sched", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "next_time$", "next", NULL, FORM_DEC, WF_ALL);
 
-	/* CONFIGURE_PWM, channel,  cycle_ticks, on_ticks, default_value, max_duration */
-	uart_send_vlq_and_wait(sp, 6, CMD_CONFIG_PWM, 0, 1000, 1000 - 100, 0, 50000);
+	if (tb->conan__DOT__pwm1 != 0)
+		fail("wrong pwm startup value\n");
+
+	/* CONFIGURE_PWM, channel, value, default_value, max_duration */
+	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_PWM, 0, 1, 0, 200000);
+	delay(sp, 100);
+
+	for (i = 0; i < 10000; ++i) {
+		if (tb->conan__DOT__pwm1 != 1)
+			fail("wrong pwm initial value\n");
+		yield(sp);
+	}
+
+	uart_send_vlq(sp, 5, CMD_SCHEDULE_PWM, 0, (uint32_t)(sp->cycle + 100000), 100, 900);
 	delay(sp, 100);
 	test_pwm_check_cycle(sp, 1000, 100);
 
 	/* give it 100000 cycles to process the message */
 	uint32_t sched = sp->cycle + 100000;
 	printf("schedule for %d\n", sched);
-	uart_send_vlq(sp, 4, CMD_SCHEDULE_PWM, 0, (uint32_t)(sp->cycle + 100000), 1000 - 555);
+	uart_send_vlq(sp, 5, CMD_SCHEDULE_PWM, 0, (uint32_t)(sp->cycle + 100000), 555, 445);
 	delay(sp, 50000);
 	/* see that it's not yet scheduled */
 	if (sp->cycle > sched - 5000)
@@ -1088,12 +1106,91 @@ test_pwm(sim_t *sp)
 	test_pwm_check_cycle(sp, 1000, 555);
 
 	/* wait until max duration (+one cycle) is over. pwm should be set to default */
-	delay(sp, 152000 - (sp->cycle - sched));
+	delay(sp, 200000 - (sp->cycle - sched));
 	printf("test it's the default of 0\n");
 	for (i = 0; i < 2000; ++i) {
 		if (tb->conan__DOT__pwm1 != 0)
-			fail("pwm failed to fall back to default");
+			fail("pwm failed to fall back to default\n");
+		yield(sp);
 	}
+	sched = sp->cycle + 50000;
+	uart_send_vlq(sp, 5, CMD_SCHEDULE_PWM, 0, sched, 111, 889);
+	delay(sp, 50000);
+	test_pwm_check_cycle(sp, 1000, 111);
+	sched = sp->cycle + 50000;
+	uart_send_vlq(sp, 5, CMD_SCHEDULE_PWM, 0, sched, 0, 1);	/* always on */
+	delay(sp, 51000);
+	for (i = 0; i < 10000; ++i) {
+		if (tb->conan__DOT__pwm1 != 1)
+			fail("pwm not always on\n");
+		yield(sp);
+	}
+	sched = sp->cycle + 50000;
+	uart_send_vlq(sp, 5, CMD_SCHEDULE_PWM, 0, sched, 1, 0);	/* always off */
+	delay(sp, 51000);
+	for (i = 0; i < 10000; ++i) {
+		if (tb->conan__DOT__pwm1 != 0)
+			fail("pwm not always off\n");
+		yield(sp);
+	}
+	sched = sp->cycle + 50000;
+	uart_send_vlq(sp, 5, CMD_SCHEDULE_PWM, 0, sched, 1, 0);	/* same again */
+	delay(sp, 49000);
+	for (i = 0; i < 10000; ++i) {
+#if 0
+		if (tb->conan__DOT__pwm1 != 0)
+			fail("pwm not always off (2nd schedule)\n");
+#endif
+		yield(sp);
+	}
+	sched = sp->cycle + 50000;
+	uart_send_vlq(sp, 5, CMD_SCHEDULE_PWM, 0, sched, 222, 778);
+	delay(sp, 50000);
+	test_pwm_check_cycle(sp, 1000, 222);
+
+	struct _testv {
+		uint32_t clock;
+		uint32_t on;
+		uint32_t off;
+	} testv[] = {
+		{ 3328252160, 4800000, 0 },
+		{ 3529852160, 4800000, 0 },
+		{ 3587452160, 4549796, 250204 },
+		{ 3630652160, 4208293, 591707 },
+		{ 3673852160, 3893000, 907000 },
+		{ 3731452160, 3604654, 1195346 },
+		{ 3789052160, 3252107, 1547893 },
+		{ 3904252160, 2988908, 1811092 },
+		{ 3990652160, 3260292, 1539708 },
+		{ 4033852160, 3845186, 954814 },
+		{ 4077052160, 4191617, 608383 },
+		{ 4120252160, 4522369, 277631 },
+		{ 4293052160, 4775595, 24405 },
+		{ 199684864, 4800000, 0 },
+		{ 401284864, 4800000, 0 },
+	};
+	uint32_t base = testv[0].clock;
+	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_PWM, 0, 1, 0, 24000000);
+	delay(sp, 50000);
+	sched = sp->cycle + 50000;
+	for (i = 0; i < sizeof(testv) / sizeof(struct _testv); ++i) {
+		uint32_t on = testv[i].on;
+		uint32_t off = testv[i].off;
+		uint32_t diff = testv[i].clock - testv[i - 1].clock;
+		if (on == 0) {
+			on = 1;
+			off = 0;
+		} else if (off == 1) {
+			on = 0;
+			off = 1;
+		}
+
+		printf("diff: %u\n", testv[i].clock - testv[i - 1].clock);
+		uart_send_vlq(sp, 5, CMD_SCHEDULE_PWM, 0, sched, on, off);
+		delay(sp, diff);
+	}
+
+	watch_clear(sp->wp);
 }
 
 static void
@@ -2176,11 +2273,11 @@ test(sim_t *sp)
 
 	test_time(sp);	/* always needed as time sync */
 	test_version(sp);
-#if 1
+#if 0
 	test_sd(sp);
 #endif
-#if 1
 	test_pwm(sp);
+#if 0
 	test_tmcuart(sp);
 	test_gpio(sp);
 	test_dro(sp);

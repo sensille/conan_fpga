@@ -171,8 +171,8 @@ initial begin
 	cmdtab[CMD_GET_VERSION] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b1 };
 	cmdtab[CMD_SYNC_TIME] = { UNIT_SYSTEM, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_GET_TIME] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b1 };
-	cmdtab[CMD_CONFIG_PWM] = { UNIT_PWM, ARGS_5, 1'b0, 1'b0 };
-	cmdtab[CMD_SCHEDULE_PWM] = { UNIT_PWM, ARGS_3, 1'b0, 1'b0 };
+	cmdtab[CMD_CONFIG_PWM] = { UNIT_PWM, ARGS_4, 1'b0, 1'b0 };
+	cmdtab[CMD_SCHEDULE_PWM] = { UNIT_PWM, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_CONFIG_STEPPER] = { UNIT_STEPPER, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_QUEUE_STEP] = { UNIT_STEPPER, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_SET_NEXT_STEP_DIR] = { UNIT_STEPPER, ARGS_2, 1'b0, 1'b0 };
