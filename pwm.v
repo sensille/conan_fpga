@@ -45,7 +45,7 @@ integer i;
 initial begin
 	for (i = 0; i < NPWM; i = i + 1) begin
 		on_ticks[i] = 0;
-		off_ticks[i] = 0;
+		off_ticks[i] = 1;
 		next_on_ticks[i] = 0;
 		next_off_ticks[i] = 0;
 		next_time[i] = 0;
@@ -53,7 +53,7 @@ initial begin
 		max_duration[i] = 0;
 		duration[i] = 0;
 		scheduled[i] = 0;
-		toggle_cnt[i] = 0;
+		toggle_cnt[i] = 1;
 	end
 end
 
@@ -78,12 +78,24 @@ always @(posedge clk) begin
 
 	for (i = 0; i < NPWM; i = i + 1) begin
 		if (toggle_cnt[i] == 1) begin
-			pwm[i] <= !pwm[i];
-			if (!pwm[i])
-				toggle_cnt[i] <= on_ticks[i];
-			else
-				toggle_cnt[i] <= off_ticks[i];
-		end else if (toggle_cnt[i] != 0) begin
+			if (pwm[i] == 0) begin
+				if (on_ticks[i] != 0) begin
+					toggle_cnt[i] <= on_ticks[i];
+					pwm[i] <= 1;
+				end else begin
+					/* no on phase */
+					toggle_cnt[i] <= off_ticks[i];
+				end
+			end else begin
+				if (off_ticks[i] != 0) begin
+					toggle_cnt[i] <= off_ticks[i];
+					pwm[i] <= 0;
+				end else begin
+					/* no on phase */
+					toggle_cnt[i] <= on_ticks[i];
+				end
+			end
+		end else begin
 			toggle_cnt[i] <= toggle_cnt[i] - 1;
 		end
 		if (scheduled[i] && next_time[i] == systime[31:0]) begin
@@ -91,26 +103,8 @@ always @(posedge clk) begin
 			off_ticks[i] <= next_off_ticks[i];
 			duration[i] <= max_duration[i];
 			scheduled[i] <= 0;
-`ifndef NOTYET
-			if (toggle_cnt[i] == 0)
-				toggle_cnt[i] <= 1;
-`else
-			if (next_on_ticks[i] == 0) begin
-				/* if we're going to a static value, just set it */
-				/* XXX maybe be nicer */
-				pwm[i] <= 1;
-				toggle_cnt[i] <= 0;
-			end else if (next_off_ticks[i] == 0) begin
-				pwm[i] <= 0;
-				toggle_cnt[i] <= 0;
-			end else if (toggle_cnt[i] == 0) begin
-				/*
-				 * if we're coming from a static value, just kick the
-				 * machine again. The condition above will do the rest
-				 */
-				toggle_cnt[i] <= 1;
-			end
-`endif
+		end else if (duration[i] != 0) begin
+			duration[i] <= duration[i] - 1;
 		end
 	end
 
@@ -121,11 +115,13 @@ always @(posedge clk) begin
 	 */
 	for (i = 0; i < NPWM; i = i + 1) begin
 		if (shutdown || duration[i] == 1) begin
-			toggle_cnt[i] <= 0;
-			pwm[i] <= default_value[i];
-		end
-		if (duration[i] != 0) begin
-			duration[i] <= duration[i] - 1;
+			if (default_value[i]) begin
+				on_ticks[i] <= 1;
+				off_ticks[i] <= 0;
+			end else begin
+				on_ticks[i] <= 0;
+				off_ticks[i] <= 1;
+			end
 		end
 	end
 
@@ -140,8 +136,13 @@ always @(posedge clk) begin
 			cmd_done <= 1;
 		end
 	end else if (state == PS_CONFIG_1) begin
-		toggle_cnt[channel] <= 0;
-		pwm[channel] <= arg_data[0];
+		if (arg_data[0]) begin
+			on_ticks[channel] <= 1;
+			off_ticks[channel] <= 0;
+		end else begin
+			on_ticks[channel] <= 0;
+			off_ticks[channel] <= 1;
+		end
 		state <= PS_CONFIG_2;
 	end else if (state == PS_CONFIG_2) begin
 		default_value[channel] <= arg_data[0];
