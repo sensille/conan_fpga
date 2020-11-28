@@ -14,6 +14,7 @@ module command #(
 	parameter NDRO = 0,
 	parameter NAS5311 = 0,
 	parameter NSD = 0,
+	parameter NETHER = 0,
 	parameter VERSION = 0
 ) (
 	input wire clk,
@@ -73,6 +74,15 @@ module command #(
 	output wire [NSD-1:0] sd_dat2_r,
 	output wire [NSD-1:0] sd_dat3_r,
 
+	output wire [NETHER-1:0] eth_tx0,
+	output wire [NETHER-1:0] eth_tx1,
+	output wire [NETHER-1:0] eth_tx_en,
+	input wire [NETHER-1:0] eth_rx_clk,
+	output wire [NETHER-1:0] eth_mdc,
+	input wire [NETHER-1:0] eth_mdio_in,
+	output wire [NETHER-1:0] eth_mdio_out,
+	output wire [NETHER-1:0] eth_mdio_en,
+
 	input wire [63:0] time_in,
 	output wire [63:0] time_out,
 	output wire time_out_en,
@@ -106,7 +116,8 @@ localparam UNIT_GPIO		= 4'd4;
 localparam UNIT_DRO		= 4'd5;
 localparam UNIT_AS5311		= 4'd6;
 localparam UNIT_SD		= 4'd7;
-localparam NUNITS		= 4'd8;
+localparam UNIT_ETHER		= 4'd8;
+localparam NUNITS		= 4'd9;
 
 localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 1;
 localparam CMD_GET_VERSION		= 0;
@@ -133,7 +144,10 @@ localparam CMD_STEPPER_GET_NEXT		= 20;
 localparam CMD_CONFIG_DRO		= 21;
 localparam CMD_CONFIG_AS5311		= 22;
 localparam CMD_SD_QUEUE			= 23;
-localparam NCMDS			= 24;
+localparam CMD_CONFIG_ETHER		= 24;
+localparam CMD_ETHER_MD_READ		= 25;
+localparam CMD_ETHER_MD_WRITE		= 26;
+localparam NCMDS			= 27;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
@@ -147,6 +161,7 @@ localparam RSP_DRO_DATA		= 7;
 localparam RSP_AS5311_DATA	= 8;
 localparam RSP_SD_CMDQ		= 9;
 localparam RSP_SD_DATQ		= 10;
+localparam RSP_ETHER_MD_READ	= 11;
 
 localparam MISSED_STEPPER	= 0;
 localparam MISSED_ENDSTOP	= 1;
@@ -192,6 +207,9 @@ initial begin
 	cmdtab[CMD_CONFIG_DRO] = { UNIT_DRO, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_CONFIG_AS5311] = { UNIT_AS5311, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_SD_QUEUE] = { UNIT_SD, ARGS_2, 1'b1, 1'b0 };
+	cmdtab[CMD_CONFIG_ETHER] = { UNIT_SD, ARGS_4, 1'b0, 1'b0 };
+	cmdtab[CMD_ETHER_MD_READ] = { UNIT_SD, ARGS_2, 1'b0, 1'b1 };
+	cmdtab[CMD_ETHER_MD_WRITE] = { UNIT_SD, ARGS_3, 1'b0, 1'b0 };
 end
 
 wire shutdown; /* set by command, never cleared */
@@ -255,6 +273,7 @@ system #(
 	.NDRO(NDRO),
 	.NAS5311(NAS5311),
 	.NSD(NSD),
+	.NETHER(NETHER),
 	.MISSED_BITS(MISSED_BITS),
 	.CMD_BITS(CMD_BITS)
 ) u_system (
@@ -494,6 +513,46 @@ sd #(
 	.sd_dat3_r(sd_dat3_r),
 
 	.debug(sd_debug),
+
+	.shutdown(shutdown)
+);
+
+wire [15:0] eth_debug;
+ether #(
+	.HZ(HZ),
+	.NETHER(NETHER),
+	.CMD_CONFIG_ETHER(CMD_SD_QUEUE),
+	.CMD_CONFIG_ETHER(CMD_CONFIG_ETHER),
+	.CMD_ETHER_MD_READ(CMD_ETHER_MD_READ),
+	.CMD_ETHER_MD_WRITE(CMD_ETHER_MD_WRITE),
+	.RSP_ETHER_MD_READ( RSP_ETHER_MD_READ),
+	.CMD_BITS(CMD_BITS)
+) u_ether (
+	.clk(clk),
+	.systime(systime),
+
+	.arg_data(unit_arg_data),
+	.arg_advance(unit_arg_advance[UNIT_ETHER]),
+	.cmd(unit_cmd),
+	.cmd_ready(unit_cmd_ready[UNIT_ETHER]),
+	.cmd_done(unit_cmd_done[UNIT_ETHER]),
+
+	.param_data(unit_param_data[UNIT_ETHER]),
+	.param_write(unit_param_write[UNIT_ETHER]),
+
+	.invol_req(unit_invol_req[UNIT_ETHER]),
+	.invol_grant(unit_invol_grant[UNIT_ETHER]),
+
+	.eth_tx0(eth_tx0),
+	.eth_tx1(eth_tx1),
+	.eth_tx_en(eth_tx_en),
+	.eth_rx_clk(eth_rx_clk),
+	.eth_mdc(eth_mdc),
+	.eth_mdio_in(eth_mdio_in),
+	.eth_mdio_out(eth_mdio_out),
+	.eth_mdio_en(eth_mdio_en),
+
+	.debug(eth_debug),
 
 	.shutdown(shutdown)
 );

@@ -14,6 +14,7 @@ module conan #(
 	parameter NDRO = 2,
 	parameter NAS5311 = 3,
 	parameter NSD = 1,
+	parameter NETHER = 1,
 	parameter VERSION = 66
 ) (
 	input wire clk_50mhz,
@@ -66,14 +67,16 @@ module conan #(
 
 	input wire pmod1_1,
 	input wire pmod1_2,
-	input wire pmod1_3,
-	input wire pmod1_4,
+	output wire pmod1_3,
+	output wire pmod1_4,
 
-	input wire pmod2_1,
+	output wire pmod2_1,
 	input wire pmod2_2,
-	input wire pmod2_3,
-	input wire pmod2_4,
-
+	output wire pmod2_3,
+	inout wire pmod2_4,
+`ifdef VERILATOR
+	input wire eth_mdio_in1,
+`endif
 	output wire display1,
 	input wire display2,
 	output wire display3,
@@ -115,6 +118,7 @@ module conan #(
 	output wire sd_cmd_en_v,
 	output wire sd_dat_en_v,
 `endif
+
 	output wire drclk,
 	output wire enn,
 	inout wire uart1,
@@ -325,6 +329,17 @@ wire [NSD-1:0] sd_dat1_r;
 wire [NSD-1:0] sd_dat2_r;
 wire [NSD-1:0] sd_dat3_r;
 
+wire [NETHER-1:0] eth_tx0;
+wire [NETHER-1:0] eth_tx1;
+wire [NETHER-1:0] eth_tx_en;
+wire [NETHER-1:0] eth_rx_clk;
+wire [NETHER-1:0] eth_mdc;
+`ifndef VERILATOR
+wire [NETHER-1:0] eth_mdio_in;
+`endif
+wire [NETHER-1:0] eth_mdio_out;
+wire [NETHER-1:0] eth_mdio_en;
+
 reg req_shutdown = 0;
 
 command #(
@@ -340,6 +355,7 @@ command #(
 	.NDRO(NDRO),
 	.NAS5311(NAS5311),
 	.NSD(NSD),
+	.NETHER(NETHER),
 	.VERSION(VERSION)
 ) u_command (
 	.clk(clk),
@@ -395,6 +411,15 @@ command #(
 	.sd_dat2_r(sd_dat2_r),
 	.sd_dat3_r(sd_dat3_r),
 
+	.eth_tx0(eth_tx0),
+	.eth_tx1(eth_tx1),
+	.eth_tx_en(eth_tx_en),
+	.eth_rx_clk(eth_rx_clk),
+	.eth_mdc(eth_mdc),
+	.eth_mdio_out(eth_mdio_out),
+	.eth_mdio_in(eth_mdio_in),
+	.eth_mdio_en(eth_mdio_en),
+
 	.time_in(systime),
 	.time_out(systime_set),
 	.time_out_en(systime_set_en),
@@ -416,6 +441,18 @@ assign uart3 = uart_en[2] ? uart_out[2] : 1'bz;
 assign uart4 = uart_en[3] ? uart_out[3] : 1'bz;
 assign uart5 = uart_en[4] ? uart_out[4] : 1'bz;
 assign uart6 = uart_en[5] ? uart_out[5] : 1'bz;
+
+`ifdef VERILATOR
+assign eth_mdio_in[0] = eth_mdio_in1;
+`else
+assign eth_mdio_in[0] = pmod2_4;
+`endif
+assign pmod2_4 = eth_mdio_en[0] ? eth_mdio_out[0] : 1'bz;
+assign pmod2_3 = eth_mdc[0];
+assign eth_rx_clk[0] = pmod2_2;
+assign pmod2_1 = eth_tx_en[0];
+assign pmod1_4 = eth_tx0[0];
+assign pmod1_3 = eth_tx1[0];
 
 assign dro_do = { chain_out_out3, chain_out_out1 };
 assign dro_clk = { chain_out_in1, chain_out_out2 };
