@@ -119,7 +119,7 @@ localparam UNIT_SD		= 4'd7;
 localparam UNIT_ETHER		= 4'd8;
 localparam NUNITS		= 4'd9;
 
-localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 1;
+localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 2;
 localparam CMD_GET_VERSION		= 0;
 localparam CMD_SYNC_TIME		= 1;
 localparam CMD_GET_TIME			= 2;
@@ -207,9 +207,9 @@ initial begin
 	cmdtab[CMD_CONFIG_DRO] = { UNIT_DRO, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_CONFIG_AS5311] = { UNIT_AS5311, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_SD_QUEUE] = { UNIT_SD, ARGS_2, 1'b1, 1'b0 };
-	cmdtab[CMD_CONFIG_ETHER] = { UNIT_SD, ARGS_4, 1'b0, 1'b0 };
-	cmdtab[CMD_ETHER_MD_READ] = { UNIT_SD, ARGS_2, 1'b0, 1'b1 };
-	cmdtab[CMD_ETHER_MD_WRITE] = { UNIT_SD, ARGS_3, 1'b0, 1'b0 };
+	cmdtab[CMD_CONFIG_ETHER] = { UNIT_ETHER, ARGS_4, 1'b0, 1'b0 };
+	cmdtab[CMD_ETHER_MD_READ] = { UNIT_ETHER, ARGS_3, 1'b0, 1'b1 };
+	cmdtab[CMD_ETHER_MD_WRITE] = { UNIT_ETHER, ARGS_4, 1'b0, 1'b0 };
 end
 
 wire shutdown; /* set by command, never cleared */
@@ -521,7 +521,6 @@ wire [15:0] eth_debug;
 ether #(
 	.HZ(HZ),
 	.NETHER(NETHER),
-	.CMD_CONFIG_ETHER(CMD_SD_QUEUE),
 	.CMD_CONFIG_ETHER(CMD_CONFIG_ETHER),
 	.CMD_ETHER_MD_READ(CMD_ETHER_MD_READ),
 	.CMD_ETHER_MD_WRITE(CMD_ETHER_MD_WRITE),

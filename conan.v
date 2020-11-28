@@ -76,6 +76,7 @@ module conan #(
 	inout wire pmod2_4,
 `ifdef VERILATOR
 	input wire eth_mdio_in1,
+	output wire eth_mdio_en_v,
 `endif
 	output wire display1,
 	input wire display2,
@@ -334,9 +335,7 @@ wire [NETHER-1:0] eth_tx1;
 wire [NETHER-1:0] eth_tx_en;
 wire [NETHER-1:0] eth_rx_clk;
 wire [NETHER-1:0] eth_mdc;
-`ifndef VERILATOR
 wire [NETHER-1:0] eth_mdio_in;
-`endif
 wire [NETHER-1:0] eth_mdio_out;
 wire [NETHER-1:0] eth_mdio_en;
 
@@ -444,6 +443,7 @@ assign uart6 = uart_en[5] ? uart_out[5] : 1'bz;
 
 `ifdef VERILATOR
 assign eth_mdio_in[0] = eth_mdio_in1;
+assign eth_mdio_en_v = eth_mdio_en[0];
 `else
 assign eth_mdio_in[0] = pmod2_4;
 `endif

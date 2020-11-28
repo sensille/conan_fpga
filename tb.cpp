@@ -33,6 +33,9 @@ static int color_disabled = 1;
 #define CMD_CONFIG_DRO		21
 #define CMD_CONFIG_AS5311	22
 #define CMD_SD_QUEUE		23
+#define CMD_CONFIG_ETHER	24
+#define CMD_ETHER_MD_READ	25
+#define CMD_ETHER_MD_WRITE	26
 
 #define RSP_GET_VERSION		0
 #define RSP_GET_TIME		1
@@ -45,6 +48,7 @@ static int color_disabled = 1;
 #define RSP_AS5311_DATA		8
 #define RSP_SD_CMDQ		9
 #define RSP_SD_DATQ		10
+#define RSP_ETHER_MD_READ	11
 
 #define HZ 48000000
 #define NUART 6
@@ -179,11 +183,34 @@ typedef struct {
 } sd_t;
 
 typedef struct {
+	vluint8_t	*mdio;
+	vluint8_t	*mdio_in;
+	vluint8_t	*mdio_en;
+	vluint8_t	*mdc;
+	vluint8_t	*rx_clk;
+	vluint8_t	*tx_en;
+	vluint8_t	*tx0;
+	vluint8_t	*tx1;
+	int		last_clk;
+	int		bitcnt;
+	int		state;
+	uint64_t	rcvbuf;
+	int		sndbits;
+	uint32_t	sndbuf;
+	int		preamble_bits;
+	uint16_t	regs[32];
+	int		phy;
+	int		reg;
+	uint16_t	data;
+} ether_t;
+
+typedef struct {
 	Vconan		*tb;
 	uart_recv_t	*urp;
 	uart_send_t	*usp;
 	as5311_t	*as5311[NAS5311];
 	sd_t		*sd;
+	ether_t		*ether;
 	uint64_t	last_change;
 	watch_t		*wp;
 	uint64_t	cycle;
@@ -198,6 +225,7 @@ typedef struct {
 static void tmcuart_tick(sim_t *sp);
 static void as5311_tick(sim_t *sp);
 static void sd_tick(sim_t *sp);
+static void ether_tick(sim_t *sp);
 static void wait_for_uart_send(sim_t *sp);
 static void fail(const char *msg, ...);
 
@@ -862,6 +890,7 @@ step(sim_t *sp, uint64_t cycle)
 	tmcuart_tick(sp);
 	as5311_tick(sp);
 	sd_tick(sp);
+	ether_tick(sp);
 
 	/* watch output before test, so we might see failure reasons */
 	do_watch(sp->wp, cycle);
@@ -2270,6 +2299,169 @@ test_sd(sim_t *sp)
 	sp->sd = NULL;
 }
 
+#define ETH_IDLE	0
+#define ETH_PREAMBLE	1
+#define ETH_RECV_1	2
+#define ETH_RECV_2	3
+#define ETH_SEND	4
+static void
+ether_tick(sim_t *sp)
+{
+	ether_t *eth = sp->ether;
+
+	if (eth == NULL)
+		return;
+
+	if (eth->last_clk == *eth->mdc)
+		return;
+	eth->last_clk = *eth->mdc;
+
+	if (eth->state == ETH_IDLE && *eth->mdc == 0)
+		return;
+
+	if (eth->state == ETH_IDLE) {
+		if (*eth->mdio_en == 1 && *eth->mdio == 1) {
+			printf("preamble starts\n");
+			eth->preamble_bits = 0;
+			eth->state = ETH_PREAMBLE;
+		}
+	} else if (eth->state == ETH_PREAMBLE && *eth->mdc == 1) {
+		if (*eth->mdio_en == 0) {
+			fail("output disabled during preamble\n");
+		}
+		if (*eth->mdio == 0) {
+			printf("start bit received\n");
+			eth->state = ETH_RECV_1;
+			eth->bitcnt = 13;
+			eth->rcvbuf = 0;
+		} else {
+			++eth->preamble_bits;
+			printf("preamble bit %d received\n", eth->preamble_bits);
+		}
+	} else if (eth->state == ETH_RECV_1 && *eth->mdc == 1) {
+		eth->rcvbuf = (eth->rcvbuf << 1) | *eth->mdio;
+		if (--eth->bitcnt == 0) {
+			printf("received %llx\n", eth->rcvbuf);
+			if ((eth->rcvbuf & 0x1000) == 0) {
+				fail("SOF marker bad\n");
+			}
+			if ((eth->rcvbuf & 0xc00) == 0x800) {
+				/* read */
+				eth->phy = (eth->rcvbuf >> 5) & 0x1f;
+				eth->reg = eth->rcvbuf & 0x1f;
+				if (eth->phy != 1)
+					fail("bad phy received\n");
+				eth->sndbuf = eth->regs[eth->reg];
+				eth->bitcnt = 18;
+				eth->state = ETH_SEND;
+			} else if ((eth->rcvbuf & 0xc00) == 0x400) {
+				/* write, continue receiving */
+				eth->bitcnt = 18;
+				eth->state = ETH_RECV_2;
+			} else {
+				fail("OP code bad\n");
+			}
+		}
+	} else if (eth->state == ETH_RECV_2 && *eth->mdc == 1) {
+		eth->rcvbuf = (eth->rcvbuf << 1) | *eth->mdio;
+printf("bitcnt %d\n", eth->bitcnt);
+		if (--eth->bitcnt == 0) {
+			printf("write received %llx\n", eth->rcvbuf);
+			eth->state = ETH_IDLE;
+			eth->phy = (eth->rcvbuf >> 23) & 0x1f;
+			eth->reg = (eth->rcvbuf >> 18) & 0x1f;
+			eth->data = eth->rcvbuf & 0xffff;
+			eth->regs[eth->reg] = eth->data;
+		}
+	} else if (eth->state == ETH_SEND && *eth->mdc == 0) {
+		*eth->mdio_in = !!(eth->sndbuf & 0x20000);
+		eth->sndbuf <<= 1;
+printf("snd bitcnt %d buf %x\n", eth->bitcnt, eth->sndbuf);
+		if (--eth->bitcnt == 0) {
+			printf("send done\n");
+			eth->state = ETH_IDLE;
+			eth->phy = 0;
+			eth->reg = 0;
+			eth->data = 0;
+		}
+	}
+}
+
+static void
+test_ether(sim_t *sp)
+{
+	Vconan *tb = sp->tb;
+	int i;
+	int j;
+	uint32_t rsp[100];
+	ether_t eth = { 0 };
+
+	eth.mdio = &tb->pmod2_4;
+	eth.mdio_in = &tb->eth_mdio_in1;
+	eth.mdio_en = &tb->eth_mdio_en_v;
+	eth.mdc = &tb->pmod2_3;
+	eth.rx_clk = &tb->pmod2_2;
+	eth.tx_en = &tb->pmod2_1;
+	eth.tx0 = &tb->pmod1_4;
+	eth.tx1 = &tb->pmod1_3;
+
+	*eth.mdio_in = 1;
+
+	for (i = 0; i < 32; ++i)
+		eth.regs[i] = (i << 8) | i;
+
+#if 0
+	watch_add(sp->wp, "u_command.msg_state$", "msg_state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_ether.cmd_ready$", "cmd_ready", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_ether.cmd_done$", "cmd_done", NULL, FORM_DEC, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_ether.state", "state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "pmod2_4", "mdio", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "eth_mdio_in1", "mdio_in", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "eth_mdio_en_v", "mdio_en", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "pmod2_3", "mdc", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "pmod2_2", "rx_clk", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "pmod2_1", "tx_en", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "pmod1_4", "tx0", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "pmod1_3", "tx1", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_ether.bitcnt", "bitcnt", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_ether.bitdata", "bitdata", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_mac.bout$", "bout", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_mac.rptr$", "rptr", NULL, FORM_BIN, WF_ALL);
+
+	sp->ether = &eth;
+
+	/* check register is preset value */
+	uart_send_vlq(sp, 4, CMD_ETHER_MD_READ, 0, 1, 10);
+	wait_for_uart_vlq(sp, 3, rsp);
+	if (rsp[0] != RSP_ETHER_MD_READ)
+		fail("ether read failed\n");
+	if (rsp[1] != 0)
+		fail("received bad channel\n");
+	if (rsp[2] != 0x0a0a)
+		fail("ether read bad register content %x\n", rsp[2]);
+
+	/* change register */
+	uart_send_vlq_and_wait(sp, 5, CMD_ETHER_MD_WRITE, 0, 1, 10, 0x1234);
+	delay(sp, 20000);
+	if (eth.phy != 1 || eth.reg != 10 || eth.data != 0x1234)
+		fail("mdc did not receive correctly\n");
+
+	/* check changed content */
+	uart_send_vlq(sp, 4, CMD_ETHER_MD_READ, 0, 1, 10);
+	wait_for_uart_vlq(sp, 3, rsp);
+	if (rsp[0] != RSP_ETHER_MD_READ)
+		fail("ether read failed\n");
+	if (rsp[1] != 0)
+		fail("received bad channel\n");
+	if (rsp[2] != 0x1234)
+		fail("ether read bad register content %x\n", rsp[2]);
+
+	/* wait for testframe */
+	delay(sp, 25000000);
+	sp->ether = NULL;
+}
+
 static void
 test(sim_t *sp)
 {
@@ -2280,8 +2472,9 @@ test(sim_t *sp)
 #if 0
 	test_sd(sp);
 #endif
-	test_pwm(sp);
+	test_ether(sp);
 #if 0
+	test_pwm(sp);
 	test_tmcuart(sp);
 	test_gpio(sp);
 	test_dro(sp);
