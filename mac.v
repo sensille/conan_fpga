@@ -24,8 +24,8 @@ wire rx_clk = rx_clk_in;
 `endif
 
 /*
-Preamble: aa aa aa aa aa aa aa
-SFD:      ab
+Preamble: 55 55 55 55 55 55 55
+SFD:      d5
 dst mac:  6 bytes
 src mac:  6 bytes
 ether type: 2 bytes
