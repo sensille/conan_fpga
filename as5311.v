@@ -29,7 +29,7 @@ module as5311 #(
 	output reg [NAS5311-1:0] as5311_cs = { NAS5311 { 1'b1 }},
 	input wire [NAS5311-1:0] as5311_do,
 
-	output reg [31:0] daq_data,
+	output wire [31:0] daq_data,
 	output reg daq_end,
 	output reg daq_valid = 0,
 	output reg daq_req = 0,
@@ -50,8 +50,7 @@ module as5311 #(
  * we always set daq_data and param_data at once,
  * so both can be merged into one by synthesis
  */
-always @(*)
-	daq_data = param_data[31:0];
+assign daq_data = param_data[31:0];
 
 localparam NAS5311_BITS = $clog2(NAS5311);
 reg [NAS5311_BITS-1:0] channel = 0;
@@ -229,6 +228,7 @@ always @(posedge clk) begin
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_IDLE && data_valid) begin
+		/* XXX TODO make use_daq per channel */
 		if (use_daq)
 			daq_req <= 1;
 		else
@@ -274,6 +274,7 @@ always @(posedge clk) begin
 		param_data[23:18] <= channel;
 		param_data[17:0] <= data[channel];
 		daq_valid <= 1;
+		data_ack[channel] <= 1;
 		state <= PS_AS5311_DAQ_2;
 	end else if (state == PS_AS5311_DAQ_2) begin
 		param_data <= starttime[channel];

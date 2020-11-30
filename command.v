@@ -205,7 +205,7 @@ initial begin
 	cmdtab[CMD_SHUTDOWN] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b0 };
 	cmdtab[CMD_STEPPER_GET_NEXT] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b1 };
 	cmdtab[CMD_CONFIG_DRO] = { UNIT_DRO, ARGS_2, 1'b0, 1'b0 };
-	cmdtab[CMD_CONFIG_AS5311] = { UNIT_AS5311, ARGS_4, 1'b0, 1'b0 };
+	cmdtab[CMD_CONFIG_AS5311] = { UNIT_AS5311, ARGS_5, 1'b0, 1'b0 };
 	cmdtab[CMD_SD_QUEUE] = { UNIT_SD, ARGS_2, 1'b1, 1'b0 };
 	cmdtab[CMD_CONFIG_ETHER] = { UNIT_ETHER, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_ETHER_MD_READ] = { UNIT_ETHER, ARGS_3, 1'b0, 1'b1 };
@@ -227,6 +227,19 @@ wire [NDAQ-1:0] daq_req;
 wire [NDAQ-1:0] daq_grant;
 localparam DAQT_AS5311_DAT = 0;
 localparam DAQT_AS5311_MAG = 1;
+
+assign daq_data[0] = 0;
+assign daq_valid[0] = 0;
+assign daq_end[0] = 0;
+assign daq_req[0] = 0;
+assign daq_data[1] = 0;
+assign daq_valid[1] = 0;
+assign daq_end[1] = 0;
+assign daq_req[1] = 0;
+assign daq_data[3] = 0;
+assign daq_valid[3] = 0;
+assign daq_end[3] = 0;
+assign daq_req[3] = 0;
 
 wire shutdown; /* set by command, never cleared */
 wire [MISSED_BITS-1:0] missed_clock;
@@ -575,7 +588,7 @@ daq #(
 	.daqo_len_rd_en(daqo_len_rd_en)
 );
 
-wire [15:0] eth_debug;
+wire [15:0] ether_debug;
 ether #(
 	.HZ(HZ),
 	.NETHER(NETHER),
@@ -584,7 +597,7 @@ ether #(
 	.CMD_CONFIG_ETHER(CMD_CONFIG_ETHER),
 	.CMD_ETHER_MD_READ(CMD_ETHER_MD_READ),
 	.CMD_ETHER_MD_WRITE(CMD_ETHER_MD_WRITE),
-	.RSP_ETHER_MD_READ( RSP_ETHER_MD_READ),
+	.RSP_ETHER_MD_READ(RSP_ETHER_MD_READ),
 	.CMD_BITS(CMD_BITS)
 ) u_ether (
 	.clk(clk),
@@ -617,7 +630,7 @@ ether #(
 	.daqo_len_ready(daqo_len_ready),
 	.daqo_len_rd_en(daqo_len_rd_en),
 
-	.debug(eth_debug),
+	.debug(ether_debug),
 
 	.shutdown(shutdown)
 );
@@ -882,7 +895,7 @@ assign debug[16:12] = msg_cmd;
 assign debug[19:17] = 0;
 assign debug[23:20] = unit;
 assign debug[31:24] = stepper_debug;
-assign debug[47:32] = sd_debug;
+assign debug[47:32] = ether_debug;
 //assign debug[47:32] = as5311_debug;
 assign debug[52:48] = dro_debug;
 //assign debug[52:48] = 0;

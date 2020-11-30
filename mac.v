@@ -18,10 +18,10 @@ module mac #(
 	input wire daqo_len_ready,
 	output reg daqo_len_rd_en = 0,
 
-	input [47:0] src_mac,
-	input [47:0] dst_mac,
+	input wire [47:0] src_mac,
+	input wire [47:0] dst_mac,
 
-	output reg [15:0] debug
+	output wire [15:0] debug
 );
 
 `ifdef VERILATOR
@@ -266,5 +266,10 @@ always @(posedge rx_clk) begin
 		end
 	end
 end
+
+assign debug[0] = tx_state;
+assign debug[5:1] = state;
+assign debug[6] = daqo_len_ready;
+assign debug[15:7] = next_len;
 
 endmodule

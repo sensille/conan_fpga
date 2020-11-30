@@ -458,6 +458,12 @@ check_packet(sim_t *sp, uint32_t *exp_data, int exp_len, int *seq)
 	if (i > 1522)
 		fail("packet too long\n");
 	plen = i;
+
+	printf("PACKET: ");
+	for (i = 0; i < plen; ++i)
+		printf("%02x ", p[i]);
+	printf("\n");
+
 	/* check IPG */
 	for (i = 0; i < 12 * 4; ++i) {
 		if (tb->eth_tx0 || tb->eth_tx1)
@@ -668,7 +674,9 @@ test_daq(sim_t *sp)
 	delay(sp, 50000);
 #endif
 	
+#if 0
 printf("sleep\n"); sleep(1000);
+#endif
 	watch_clear(sp->wp);
 }
 

@@ -68,7 +68,7 @@ mac #(
 	.src_mac(src_mac),
 	.dst_mac(dst_mac),
 
-	.debug()
+	.debug(debug)
 );
 
 /*
@@ -145,10 +145,10 @@ always @(posedge clk) begin
 		state <= PS_CONFIG_ETHER_2;
 	end else if (state == PS_CONFIG_ETHER_2) begin
 		src_mac[15:0] <= arg_data[31:16];
-		dst_mac[47:16] <= arg_data[15:0];
+		dst_mac[47:32] <= arg_data[15:0];
 		state <= PS_CONFIG_ETHER_3;
 	end else if (state == PS_CONFIG_ETHER_3) begin
-		dst_mac[15:0] <= arg_data[15:0];
+		dst_mac[31:0] <= arg_data;
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_ETHER_MD_1) begin

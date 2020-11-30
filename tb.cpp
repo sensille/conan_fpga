@@ -1872,7 +1872,7 @@ dro_send(sim_t *sp, uint32_t val, int bits, uint32_t idle)
 
 	delay(sp, idle);
 
-	return starttime + HZ / 1000000 + 4;
+	return starttime + HZ / 1000000 + 3;
 }
 
 static void
@@ -2000,7 +2000,7 @@ test_as5311(sim_t *sp)
 	watch_add(sp->wp, "u_as5311.next_mag", "n_mag", NULL, FORM_DEC, WF_ALL);
 
 	/* channel, divider, data interval, mag interval */
-	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_AS5311, 0, 10, 100000, 300000, 0);
+	uart_send_vlq_and_wait(sp, 6, CMD_CONFIG_AS5311, 0, 10, 100000, 300000, 0);
 
 	/* rsp: RSP_AS5311_DATA, channel, starttime, data, type (1=data, 0=mag) */
 	for (i = 0; i < 5; ++i) {
@@ -2033,10 +2033,27 @@ test_as5311(sim_t *sp)
 			fail("as5311 bad status data\n");
 	}
 
+	/* test ethernet */
+	watch_add(sp->wp, "daq_req", "d_req", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "daq_grant", "d_grant", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "daq_valid", "d_valid", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "pmod2_1", "tx_en", NULL, FORM_HEX, WF_ALL);
+	uart_send_vlq_and_wait(sp, 6, CMD_CONFIG_AS5311, 0, 10, 100000, 300000, 1);
+
+	for (i = 0; i < 1000000; ++i) {
+		if (tb->pmod2_1)
+			break;
+		yield(sp);
+	}
+	if (i == 1000000)
+		fail("no ethernet activity\n");
+
 	/* disable: channel, divider, data interval, mag interval */
-	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_AS5311, 0, 0, 0, 0);
+	uart_send_vlq_and_wait(sp, 6, CMD_CONFIG_AS5311, 0, 0, 0, 0, 0);
 
 	sp->as5311[0] = NULL;
+
+	watch_clear(sp->wp);
 }
 
 static void
@@ -2455,6 +2472,16 @@ test_ether(sim_t *sp)
 	if (rsp[2] != 0x1234)
 		fail("ether read bad register content %x\n", rsp[2]);
 
+	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_ETHER, 0, 305419896, 2596134054, 843157389);
+	delay(sp, 1000);
+	/* check mac addresses */
+	printf("src_mac %llx\n", tb->conan__DOT__u_command__DOT__u_ether__DOT__src_mac);
+	printf("dst_mac %llx\n", tb->conan__DOT__u_command__DOT__u_ether__DOT__dst_mac);
+	if (tb->conan__DOT__u_command__DOT__u_ether__DOT__src_mac != 0x123456789abdllu)
+		fail("bad src_mac\n");
+	if (tb->conan__DOT__u_command__DOT__u_ether__DOT__dst_mac != 0xdca632418f8dllu)
+		fail("bad dst_mac\n");
+
 #if 0
 	/* wait for testframe */
 	delay(sp, 25000000);
@@ -2472,13 +2499,15 @@ test(sim_t *sp)
 #if 0
 	test_sd(sp);
 #endif
-	test_ether(sp);
 #if 1
+	test_ether(sp);
 	test_pwm(sp);
 	test_tmcuart(sp);
 	test_gpio(sp);
 	test_dro(sp);
+#endif
 	test_as5311(sp);
+#if 1
 	/* must be last, as it ends with a shutdown */
 	test_stepper(sp);
 #endif
