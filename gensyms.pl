@@ -82,7 +82,7 @@ HERE
 
 for (@signals) {
 	print $dst "\t{ \"$_->{name_cooked}\", $_->{type}, $_->{range_start}, ";
-	print $dst "$_->{range_end}, $_->{num}, offsetof(Vconan, $_->{name_raw}) },\n";
+	print $dst "$_->{range_end}, $_->{num}, offsetof(V$model, $_->{name_raw}) },\n";
 }
 
 print $dst <<"HERE";

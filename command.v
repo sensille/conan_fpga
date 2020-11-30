@@ -212,6 +212,22 @@ initial begin
 	cmdtab[CMD_ETHER_MD_WRITE] = { UNIT_ETHER, ARGS_4, 1'b0, 1'b0 };
 end
 
+/*
+ * data acquisition outlet
+ */
+localparam DAQ_MCU	= 0;
+localparam DAQ_SYSTIME	= 1;
+localparam DAQ_AS5311	= 2;
+localparam DAQ_DRO	= 3;
+localparam NDAQ		= 4;
+wire [31:0] daq_data[NDAQ];
+wire [NDAQ-1:0] daq_valid;
+wire [NDAQ-1:0] daq_end;
+wire [NDAQ-1:0] daq_req;
+wire [NDAQ-1:0] daq_grant;
+localparam DAQT_AS5311_DAT = 0;
+localparam DAQT_AS5311_MAG = 1;
+
 wire shutdown; /* set by command, never cleared */
 wire [MISSED_BITS-1:0] missed_clock;
 assign missed_clock[MISSED_REQ_SHUTDOWN] = req_shutdown;
@@ -445,10 +461,12 @@ dro #(
 wire [15:0] as5311_debug;
 as5311 #(
 	.HZ(HZ),
+	.CMD_BITS(CMD_BITS),
 	.NAS5311(NAS5311),
 	.CMD_CONFIG_AS5311(CMD_CONFIG_AS5311),
 	.RSP_AS5311_DATA(RSP_AS5311_DATA),
-	.CMD_BITS(CMD_BITS)
+	.DAQT_AS5311_DAT(DAQT_AS5311_DAT),
+	.DAQT_AS5311_MAG(DAQT_AS5311_MAG)
 ) u_as5311 (
 	.clk(clk),
 	.systime(systime),
@@ -468,6 +486,12 @@ as5311 #(
 	.as5311_clk(as5311_clk),
 	.as5311_cs(as5311_cs),
 	.as5311_do(as5311_do),
+
+	.daq_data(daq_data[DAQ_AS5311]),
+	.daq_valid(daq_valid[DAQ_AS5311]),
+	.daq_end(daq_end[DAQ_AS5311]),
+	.daq_req(daq_req[DAQ_AS5311]),
+	.daq_grant(daq_grant[DAQ_AS5311]),
 
 	.debug(as5311_debug),
 
@@ -517,10 +541,46 @@ sd #(
 	.shutdown(shutdown)
 );
 
+localparam MAC_PACKET_BITS = 8; /* 2^8 * 4 bytes > 1500 */
+wire [31:0] daqo_data;
+wire daqo_data_rd_en;
+wire [MAC_PACKET_BITS-1:0] daqo_len;
+wire daqo_len_ready;
+wire daqo_len_rd_en;
+/* no system verilog: flatten daq_data */
+wire [(32 * NDAQ)-1:0] _daq_data;
+genvar gi;
+generate
+	for (gi = 0; gi < NDAQ; gi = gi + 1)
+		assign _daq_data[((gi+1) * 32)-1:(gi * 32)] = daq_data[gi];
+endgenerate
+
+daq #(
+	.NDAQ(NDAQ),
+	.MAC_PACKET_BITS(MAC_PACKET_BITS)
+) u_daq (
+	.clk(clk),
+	.systime(systime),
+
+	.daq_data_in(_daq_data),
+	.daq_end(daq_end),
+	.daq_valid(daq_valid),
+	.daq_req(daq_req),
+	.daq_grant(daq_grant),
+
+	.daqo_data(daqo_data),
+	.daqo_data_rd_en(daqo_data_rd_en),
+	.daqo_len(daqo_len),
+	.daqo_len_ready(daqo_len_ready),
+	.daqo_len_rd_en(daqo_len_rd_en)
+);
+
 wire [15:0] eth_debug;
 ether #(
 	.HZ(HZ),
 	.NETHER(NETHER),
+	.NDAQ(NDAQ),
+	.MAC_PACKET_BITS(MAC_PACKET_BITS),
 	.CMD_CONFIG_ETHER(CMD_CONFIG_ETHER),
 	.CMD_ETHER_MD_READ(CMD_ETHER_MD_READ),
 	.CMD_ETHER_MD_WRITE(CMD_ETHER_MD_WRITE),
@@ -550,6 +610,12 @@ ether #(
 	.eth_mdio_in(eth_mdio_in),
 	.eth_mdio_out(eth_mdio_out),
 	.eth_mdio_en(eth_mdio_en),
+
+	.daqo_data(daqo_data),
+	.daqo_data_rd_en(daqo_data_rd_en),
+	.daqo_len(daqo_len),
+	.daqo_len_ready(daqo_len_ready),
+	.daqo_len_rd_en(daqo_len_rd_en),
 
 	.debug(eth_debug),
 

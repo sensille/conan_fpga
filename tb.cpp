@@ -2000,7 +2000,7 @@ test_as5311(sim_t *sp)
 	watch_add(sp->wp, "u_as5311.next_mag", "n_mag", NULL, FORM_DEC, WF_ALL);
 
 	/* channel, divider, data interval, mag interval */
-	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_AS5311, 0, 10, 100000, 300000);
+	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_AS5311, 0, 10, 100000, 300000, 0);
 
 	/* rsp: RSP_AS5311_DATA, channel, starttime, data, type (1=data, 0=mag) */
 	for (i = 0; i < 5; ++i) {
@@ -2426,8 +2426,6 @@ test_ether(sim_t *sp)
 	watch_add(sp->wp, "pmod1_3", "tx1", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_ether.bitcnt", "bitcnt", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_ether.bitdata", "bitdata", NULL, FORM_BIN, WF_ALL);
-	watch_add(sp->wp, "u_mac.bout$", "bout", NULL, FORM_BIN, WF_ALL);
-	watch_add(sp->wp, "u_mac.rptr$", "rptr", NULL, FORM_BIN, WF_ALL);
 
 	sp->ether = &eth;
 
@@ -2457,8 +2455,10 @@ test_ether(sim_t *sp)
 	if (rsp[2] != 0x1234)
 		fail("ether read bad register content %x\n", rsp[2]);
 
+#if 0
 	/* wait for testframe */
 	delay(sp, 25000000);
+#endif
 	sp->ether = NULL;
 }
 
@@ -2473,7 +2473,7 @@ test(sim_t *sp)
 	test_sd(sp);
 #endif
 	test_ether(sp);
-#if 0
+#if 1
 	test_pwm(sp);
 	test_tmcuart(sp);
 	test_gpio(sp);
@@ -2517,6 +2517,8 @@ main(int argc, char **argv) {
 		tb->eval();
 		++cycle;
 		step(sp, cycle);
+		/* push in values changed by step() */
+		tb->eval();
 	}
 	exit(0);
 }

@@ -5,6 +5,8 @@ module ether #(
 	parameter HZ = 0,
 	parameter CMD_BITS = 0,
 	parameter NETHER = 0,
+	parameter NDAQ = 0,
+	parameter MAC_PACKET_BITS = 0,
 	parameter CMD_CONFIG_ETHER = 0,
 	parameter CMD_ETHER_MD_READ = 0,
 	parameter CMD_ETHER_MD_WRITE = 0,
@@ -34,41 +36,40 @@ module ether #(
 	output reg [NETHER-1:0] eth_mdio_out = 0,
 	output reg [NETHER-1:0] eth_mdio_en = 0,
 
+	input wire [31:0] daqo_data,
+	output wire daqo_data_rd_en,
+	input wire [MAC_PACKET_BITS-1:0] daqo_len,
+	input wire daqo_len_ready,
+	output wire daqo_len_rd_en,
+
 	output reg [15:0] debug,
 
 	input wire shutdown	/* not used */
 );
 
-reg [NETHER-1:0] mac_enable = 1; /* XXX */
-reg [NETHER-1:0] mac_send_test_frame = 0; /* XXX */
-genvar gi;
-generate
-	for (gi = 0; gi < NETHER; gi = gi + 1) begin : genmac
-		mac #(
-			.HZ(HZ)
-		) u_mac (
-			.clk(clk),
-			.tx0(eth_tx0[gi]),
-			.tx1(eth_tx1[gi]),
-			.tx_en(eth_tx_en[gi]),
-			.rx_clk_in(eth_rx_clk[gi]),
+reg [47:0] src_mac = 48'hffffffffffff;
+reg [47:0] dst_mac = 48'hffffffffffff;
+mac #(
+	.HZ(HZ),
+	.MAC_PACKET_BITS(MAC_PACKET_BITS)
+) u_mac (
+	.clk(clk),
+	.tx0(eth_tx0[0]),
+	.tx1(eth_tx1[0]),
+	.tx_en(eth_tx_en[0]),
+	.rx_clk_in(eth_rx_clk[0]),
 
-			.enable(mac_enable[gi]),
-			.send_test_frame(mac_send_test_frame[gi]),
-			.debug()
-		);
-	end
-endgenerate
+	.daqo_data(daqo_data),
+	.daqo_data_rd_en(daqo_data_rd_en),
+	.daqo_len(daqo_len),
+	.daqo_len_ready(daqo_len_ready),
+	.daqo_len_rd_en(daqo_len_rd_en),
 
-/* XXX */
-reg [24:0] testframe_cnt = 1;
-always @(posedge clk) begin
-	testframe_cnt <= testframe_cnt + 1;
-	if (testframe_cnt == 1000000)
-		mac_send_test_frame[0] <= 1;
-	else
-		mac_send_test_frame[0] <= 0;
-end
+	.src_mac(src_mac),
+	.dst_mac(dst_mac),
+
+	.debug()
+);
 
 /*
 	parameter CMD_CONFIG_ETHER = 0,
@@ -88,18 +89,21 @@ localparam NETHER_BITS = $clog2(NETHER + 1); /* +1 to make the case NETHER=1 wor
 reg [NETHER_BITS-1:0] channel = 0;
 
 localparam PS_IDLE			= 0;
-localparam PS_ETHER_MD_1		= 1;
-localparam PS_ETHER_MD_2		= 2;
-localparam PS_ETHER_MD_3		= 3;
-localparam PS_ETHER_MD_4		= 4;
-localparam PS_ETHER_MD_READING		= 5;
-localparam PS_ETHER_MD_PREAMBLE		= 6;
-localparam PS_ETHER_MD_FRAME		= 7;
-localparam PS_ETHER_MD_DONE		= 8;
-localparam PS_ETHER_MD_RESPOND		= 9;
-localparam PS_ETHER_MD_RESPOND_1	= 10;
-localparam PS_ETHER_MD_RESPOND_2	= 11;
-localparam PS_MAX			= 11;
+localparam PS_CONFIG_ETHER_1		= 1;
+localparam PS_CONFIG_ETHER_2		= 2;
+localparam PS_CONFIG_ETHER_3		= 3;
+localparam PS_ETHER_MD_1		= 4;
+localparam PS_ETHER_MD_2		= 5;
+localparam PS_ETHER_MD_3		= 6;
+localparam PS_ETHER_MD_4		= 7;
+localparam PS_ETHER_MD_READING		= 8;
+localparam PS_ETHER_MD_PREAMBLE		= 9;
+localparam PS_ETHER_MD_FRAME		= 10;
+localparam PS_ETHER_MD_DONE		= 11;
+localparam PS_ETHER_MD_RESPOND		= 12;
+localparam PS_ETHER_MD_RESPOND_1	= 13;
+localparam PS_ETHER_MD_RESPOND_2	= 14;
+localparam PS_MAX			= 14;
 localparam PS_BITS = $clog2(PS_MAX + 1);
 reg [PS_BITS-1:0] state = PS_IDLE;
 
@@ -125,7 +129,9 @@ always @(posedge clk) begin
 	if (state == PS_IDLE && cmd_ready) begin
 		// common to all cmds
 		channel <= arg_data[NETHER_BITS-1:0];
-		if (cmd == CMD_ETHER_MD_WRITE) begin
+		if (cmd == CMD_CONFIG_ETHER) begin
+			state <= PS_CONFIG_ETHER_1;
+		end else if (cmd == CMD_ETHER_MD_WRITE) begin
 			state <= PS_ETHER_MD_1;
 			rdwr <= 0;
 		end else if (cmd == CMD_ETHER_MD_READ) begin
@@ -134,6 +140,17 @@ always @(posedge clk) begin
 		end else begin
 			cmd_done <= 1;
 		end
+	end else if (state == PS_CONFIG_ETHER_1) begin
+		src_mac[47:16] <= arg_data;
+		state <= PS_CONFIG_ETHER_2;
+	end else if (state == PS_CONFIG_ETHER_2) begin
+		src_mac[15:0] <= arg_data[31:16];
+		dst_mac[47:16] <= arg_data[15:0];
+		state <= PS_CONFIG_ETHER_3;
+	end else if (state == PS_CONFIG_ETHER_3) begin
+		dst_mac[15:0] <= arg_data[15:0];
+		cmd_done <= 1;
+		state <= PS_IDLE;
 	end else if (state == PS_ETHER_MD_1) begin
 		/* CMD_ETHER_MD_READ in <channel> <phy> <register> */
 		/* CMD_ETHER_MD_WRITE in <channel> <phy> <register> <data> */

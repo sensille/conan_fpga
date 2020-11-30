@@ -6,7 +6,9 @@ module as5311 #(
 	parameter CMD_BITS = 0,
 	parameter NAS5311 = 0,
 	parameter CMD_CONFIG_AS5311 = 0,
-	parameter RSP_AS5311_DATA = 0
+	parameter RSP_AS5311_DATA = 0,
+	parameter DAQT_AS5311_DAT = 0,
+	parameter DAQT_AS5311_MAG = 0
 ) (
 	input wire clk,
 	input wire [31:0] systime,
@@ -27,6 +29,12 @@ module as5311 #(
 	output reg [NAS5311-1:0] as5311_cs = { NAS5311 { 1'b1 }},
 	input wire [NAS5311-1:0] as5311_do,
 
+	output reg [31:0] daq_data,
+	output reg daq_end,
+	output reg daq_valid = 0,
+	output reg daq_req = 0,
+	input wire daq_grant,
+
 	output wire [15:0] debug,
 
 	input wire shutdown	/* not used */
@@ -37,6 +45,13 @@ module as5311 #(
 	CMD_AS5311_READ in <channel> <clock> <val1>
 	timeout 0 means disable
 */
+
+/*
+ * we always set daq_data and param_data at once,
+ * so both can be merged into one by synthesis
+ */
+always @(*)
+	daq_data = param_data[31:0];
 
 localparam NAS5311_BITS = $clog2(NAS5311);
 reg [NAS5311_BITS-1:0] channel = 0;
@@ -70,13 +85,16 @@ localparam PS_IDLE		= 0;
 localparam PS_CONFIG_AS5311_1	= 1;
 localparam PS_CONFIG_AS5311_2	= 2;
 localparam PS_CONFIG_AS5311_3	= 3;
-localparam PS_WAIT_GRANT	= 4;
-localparam PS_AS5311_DATA_1	= 5;
-localparam PS_AS5311_DATA_2	= 6;
-localparam PS_AS5311_DATA_3	= 7;
-localparam PS_AS5311_DATA_4	= 8;
-localparam PS_AS5311_DATA_5	= 9;
-localparam PS_MAX		= 9;
+localparam PS_CONFIG_AS5311_4	= 4;
+localparam PS_WAIT_GRANT	= 5;
+localparam PS_AS5311_DATA_1	= 6;
+localparam PS_AS5311_DATA_2	= 7;
+localparam PS_AS5311_DATA_3	= 8;
+localparam PS_AS5311_DATA_4	= 9;
+localparam PS_AS5311_DATA_5	= 10;
+localparam PS_AS5311_DAQ_1	= 11;
+localparam PS_AS5311_DAQ_2	= 12;
+localparam PS_MAX		= 12;
 
 localparam PS_BITS= $clog2(PS_MAX + 1);
 reg [PS_BITS-1:0] state = PS_IDLE;
@@ -91,6 +109,7 @@ localparam AS_MAX		= 5;
 
 localparam AS_BITS= $clog2(AS_MAX + 1);
 reg [AS_BITS-1:0] as_state [NAS5311];
+reg use_daq = 0;
 
 integer i;
 initial begin
@@ -180,8 +199,9 @@ always @(posedge clk) begin
 end
 
 always @(posedge clk) begin
-	if (cmd_done)
-		cmd_done <= 0;
+	cmd_done <= 0;
+	daq_end <= 0;
+	daq_valid <= 0;
 	data_ack <= 0;
 
 	if (state == PS_IDLE && cmd_ready) begin
@@ -203,17 +223,27 @@ always @(posedge clk) begin
 	end else if (state == PS_CONFIG_AS5311_3) begin
 		mag_interval[channel] <= arg_data;
 		next_mag[channel] <= arg_data + systime;
+		state <= PS_CONFIG_AS5311_4;
+	end else if (state == PS_CONFIG_AS5311_4) begin
+		use_daq <= arg_data;
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_IDLE && data_valid) begin
-		invol_req <= 1;
+		if (use_daq)
+			daq_req <= 1;
+		else
+			invol_req <= 1;
 		state <= PS_WAIT_GRANT;
-	end else if (state == PS_WAIT_GRANT && invol_grant) begin
+	end else if (state == PS_WAIT_GRANT && (invol_grant || daq_grant)) begin
 		invol_req <= 0;
+		daq_req <= 0;
 		for (i = 0; i < NAS5311; i = i + 1) begin
 			if (data_valid[i]) begin
 				channel <= i;
-				state <= PS_AS5311_DATA_1;
+				if (invol_grant)
+					state <= PS_AS5311_DATA_1;
+				else
+					state <= PS_AS5311_DAQ_1;
 				i = NAS5311;
 			end
 		end
@@ -235,6 +265,20 @@ always @(posedge clk) begin
 		cmd_done <= 1;
 		param_write <= 0;
 		param_data <= RSP_AS5311_DATA;
+		state <= PS_IDLE;
+	end else if (state == PS_AS5311_DAQ_1) begin
+		if (ftype[channel])
+			param_data[31:24] <= DAQT_AS5311_DAT;
+		else
+			param_data[31:24] <= DAQT_AS5311_MAG;
+		param_data[23:18] <= channel;
+		param_data[17:0] <= data[channel];
+		daq_valid <= 1;
+		state <= PS_AS5311_DAQ_2;
+	end else if (state == PS_AS5311_DAQ_2) begin
+		param_data <= starttime[channel];
+		daq_valid <= 1;
+		daq_end <= 1;
 		state <= PS_IDLE;
 	end
 end
