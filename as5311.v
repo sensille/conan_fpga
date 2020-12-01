@@ -108,7 +108,7 @@ localparam AS_MAX		= 5;
 
 localparam AS_BITS= $clog2(AS_MAX + 1);
 reg [AS_BITS-1:0] as_state [NAS5311];
-reg use_daq = 0;
+reg [AS_BITS-1:0] use_daq = 0;
 
 integer i;
 initial begin
@@ -224,12 +224,11 @@ always @(posedge clk) begin
 		next_mag[channel] <= arg_data + systime;
 		state <= PS_CONFIG_AS5311_4;
 	end else if (state == PS_CONFIG_AS5311_4) begin
-		use_daq <= arg_data;
+		use_daq[channel] <= arg_data;
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_IDLE && data_valid) begin
-		/* XXX TODO make use_daq per channel */
-		if (use_daq)
+		if (use_daq & data_valid)
 			daq_req <= 1;
 		else
 			invol_req <= 1;
@@ -240,10 +239,10 @@ always @(posedge clk) begin
 		for (i = 0; i < NAS5311; i = i + 1) begin
 			if (data_valid[i]) begin
 				channel <= i;
-				if (invol_grant)
-					state <= PS_AS5311_DATA_1;
-				else
+				if (use_daq[i] & daq_grant)
 					state <= PS_AS5311_DAQ_1;
+				else if (~use_daq[i] & invol_grant)
+					state <= PS_AS5311_DATA_1;
 				i = NAS5311;
 			end
 		end
