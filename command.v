@@ -15,7 +15,8 @@ module command #(
 	parameter NAS5311 = 0,
 	parameter NSD = 0,
 	parameter NETHER = 0,
-	parameter VERSION = 0
+	parameter VERSION = 0,
+	parameter PACKET_WAIT_FRAC = 0
 ) (
 	input wire clk,
 
@@ -598,7 +599,8 @@ ether #(
 	.CMD_ETHER_MD_READ(CMD_ETHER_MD_READ),
 	.CMD_ETHER_MD_WRITE(CMD_ETHER_MD_WRITE),
 	.RSP_ETHER_MD_READ(RSP_ETHER_MD_READ),
-	.CMD_BITS(CMD_BITS)
+	.CMD_BITS(CMD_BITS),
+	.PACKET_WAIT_FRAC(PACKET_WAIT_FRAC)
 ) u_ether (
 	.clk(clk),
 	.systime(systime),

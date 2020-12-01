@@ -10,7 +10,8 @@ module ether #(
 	parameter CMD_CONFIG_ETHER = 0,
 	parameter CMD_ETHER_MD_READ = 0,
 	parameter CMD_ETHER_MD_WRITE = 0,
-	parameter RSP_ETHER_MD_READ = 0
+	parameter RSP_ETHER_MD_READ = 0,
+	parameter PACKET_WAIT_FRAC = 0
 ) (
 	input wire clk,
 	input wire [31:0] systime,
@@ -51,7 +52,8 @@ reg [47:0] src_mac = 48'hffffffffffff;
 reg [47:0] dst_mac = 48'hffffffffffff;
 mac #(
 	.HZ(HZ),
-	.MAC_PACKET_BITS(MAC_PACKET_BITS)
+	.MAC_PACKET_BITS(MAC_PACKET_BITS),
+	.PACKET_WAIT_FRAC(PACKET_WAIT_FRAC)
 ) u_mac (
 	.clk(clk),
 	.tx0(eth_tx0[0]),

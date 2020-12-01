@@ -59,7 +59,8 @@ reg [47:0] src_mac = 48'h123456789abc;
 reg [47:0] dst_mac = 48'h665544332211;
 mac #(
 	.HZ(HZ),
-	.MAC_PACKET_BITS(MAC_PACKET_BITS)
+	.MAC_PACKET_BITS(MAC_PACKET_BITS),
+	.PACKET_WAIT_FRAC(100)
 ) u_mac (
 	.clk(clk),
 

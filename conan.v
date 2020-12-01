@@ -15,7 +15,8 @@ module conan #(
 	parameter NAS5311 = 3,
 	parameter NSD = 1,
 	parameter NETHER = 1,
-	parameter VERSION = 66
+	parameter VERSION = 66,
+	parameter PACKET_WAIT_FRAC = 10
 ) (
 	input wire clk_50mhz,
 	input wire clk_48mhz,
@@ -355,7 +356,8 @@ command #(
 	.NAS5311(NAS5311),
 	.NSD(NSD),
 	.NETHER(NETHER),
-	.VERSION(VERSION)
+	.VERSION(VERSION),
+	.PACKET_WAIT_FRAC(PACKET_WAIT_FRAC)
 ) u_command (
 	.clk(clk),
 	.systime(systime[31:0]),

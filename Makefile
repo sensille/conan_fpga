@@ -27,7 +27,7 @@ v: vrun
 test: vrun
 
 obj_dir/$(TARGET).mk: $(SRC) Makefile
-	verilator --public -Wall -CFLAGS -g --exe --cc $(TARGET).v verilator.vlt tb.cpp
+	verilator -GPACKET_WAIT_FRAC=100 --public -Wall -CFLAGS -g --exe --cc $(TARGET).v verilator.vlt tb.cpp
 
 obj_dir/V$(TARGET)__ALL.a: obj_dir/$(TARGET).mk
 	make -j 4 -C obj_dir -f V$(TARGET).mk V$(TARGET)__ALL.a

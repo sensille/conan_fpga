@@ -3,7 +3,8 @@
 
 module mac #(
 	parameter HZ = 0,
-	parameter MAC_PACKET_BITS = 0
+	parameter MAC_PACKET_BITS = 0,
+	parameter PACKET_WAIT_FRAC = 0
 ) (
 	input wire clk,
 
@@ -48,21 +49,25 @@ ether type 0x800 == IP
 
 /* sync ready in */
 reg len_ready_sync_1 = 0;
-reg len_ready_sync_2 = 0;
+reg len_ready = 0;
 always @(posedge rx_clk) begin
 	len_ready_sync_1 <= daqo_len_ready;
-	len_ready_sync_2 <= len_ready_sync_1;
+	len_ready <= len_ready_sync_1;
 end
 /* sync rd_en out */
 reg data_rd_en_sync_1 = 0;
+reg data_rd_en_sync_2 = 0;
 reg data_rd_en = 0;
 reg len_rd_en_sync_1 = 0;
+reg len_rd_en_sync_2 = 0;
 reg len_rd_en = 0;
-always @(posedge rx_clk) begin
-	daqo_data_rd_en <= data_rd_en_sync_1;
+always @(posedge clk) begin
 	data_rd_en_sync_1 <= data_rd_en;
-	daqo_len_rd_en <= len_rd_en_sync_1;
+	data_rd_en_sync_2 <= data_rd_en_sync_1;
+	daqo_data_rd_en <= data_rd_en_sync_1 != data_rd_en_sync_2;
 	len_rd_en_sync_1 <= len_rd_en;
+	len_rd_en_sync_2 <= len_rd_en_sync_1;
+	daqo_len_rd_en <= len_rd_en_sync_1 != len_rd_en_sync_2;
 end
 
 /*
@@ -87,7 +92,6 @@ localparam MS_GAP		= 11;
 localparam MS_MAX		= 11;
 localparam MS_BITS = $clog2(MS_MAX + 1);
 
-localparam MIN_PACKET		= 50; /* x4 */
 localparam MAX_PACKET		= 375;
 
 reg [3:0] len_wait = 0;
@@ -102,12 +106,10 @@ reg [MS_BITS-1:0] state = MS_IDLE;
 reg [7:0] idle_wait;
 reg next_data_wanted = 0;
 reg [3:0] stuff_len;
-localparam PACKET_WAIT_TIME = HZ/100;
+localparam PACKET_WAIT_TIME = HZ / PACKET_WAIT_FRAC;
 reg [$clog2(PACKET_WAIT_TIME) - 1:0] packet_wait;
 reg [15:0] ether_seq = 0;
 always @(posedge rx_clk) begin
-	data_rd_en <= 0;
-	len_rd_en <= 0;
 	crc_data_ready <= 0;
 	tx_start <= 0;
 	init_crc <= 0;
@@ -116,19 +118,26 @@ always @(posedge rx_clk) begin
 		len_wait <= len_wait - 1;
 	if (packet_wait)
 		packet_wait <= packet_wait - 1;
-	if (len_wait == 0 && len_ready_sync_2 && next_len + daqo_len < MAX_PACKET) begin
-		next_len <= next_len + daqo_len;
-		len_rd_en <= 1;
-		/*
-		 * give it 12 clocks to sync the next len in and out.
-		 * should be plenty
-		 */
-		len_wait <= 12;
-		/* wait timer */
-		if (next_len == 0)
-			packet_wait <= PACKET_WAIT_TIME;
-	end else if (len_wait == 0 && state == MS_IDLE &&
-		     (next_len >= MIN_PACKET || (next_len && packet_wait == 0))) begin
+	if (len_wait == 0 && len_ready) begin
+		if (next_len + daqo_len < MAX_PACKET) begin
+			next_len <= next_len + daqo_len;
+			len_rd_en <= !len_rd_en; /* toggle triggers one read */
+			/*
+			 * give it 12 clocks to sync the next len in and out.
+			 * should be plenty
+			 */
+			len_wait <= 12;
+			/* wait timer */
+			if (next_len == 0)
+				packet_wait <= PACKET_WAIT_TIME;
+		end else if (state == MS_IDLE) begin
+			/* packet is full, send immediately */
+			data_len <= next_len;
+			stuff_len <= 0;
+			next_len <= 0;
+			state <= MS_START;
+		end
+	end else if (state == MS_IDLE && next_len && packet_wait == 0) begin
 		data_len <= next_len;
 		if (next_len < 11)
 			stuff_len <= 11 - next_len;
@@ -166,7 +175,7 @@ always @(posedge rx_clk) begin
 	end else if (state == MS_PAYLOAD && next_data_wanted) begin
 		next_data <= daqo_data;
 		crc_data_ready <= 1;
-		data_rd_en <= 1;
+		data_rd_en <= !data_rd_en;	/* toggle triggers one read */
 		if (data_len == 1) begin
 			if (stuff_len) begin
 				state <= MS_STUFF;
