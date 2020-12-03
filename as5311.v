@@ -108,7 +108,7 @@ localparam AS_MAX		= 5;
 
 localparam AS_BITS= $clog2(AS_MAX + 1);
 reg [AS_BITS-1:0] as_state [NAS5311];
-reg [AS_BITS-1:0] use_daq = 0;
+reg [NAS5311-1:0] use_daq = 0;
 
 integer i;
 initial begin

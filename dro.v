@@ -26,6 +26,12 @@ module dro #(
 	input wire [NDRO-1:0] dro_clk,
 	input wire [NDRO-1:0] dro_do,
 
+	output wire [31:0] daq_data,
+	output reg daq_end,
+	output reg daq_valid = 0,
+	output reg daq_req = 0,
+	input wire daq_grant,
+
 	output wire [15:0] debug,
 
 	input wire shutdown	/* not used */
@@ -36,6 +42,12 @@ module dro #(
 	CMD_DRO_READ in <channel> <clock> <val1>
 	timeout 0 means disable
 */
+
+/*
+ * we always set daq_data and param_data at once,
+ * so both can be merged into one by synthesis
+ */
+assign daq_data = param_data[31:0];
 
 localparam NDRO_BITS = $clog2(NDRO);
 reg [NDRO_BITS-1:0] channel = 0;
@@ -70,15 +82,21 @@ localparam DEBOUNCE_BITS = $clog2(DEBOUNCE_CNT + 1);
 reg [DEBOUNCE_BITS-1:0] clk_deb_cnt [NDRO];
 reg [DEBOUNCE_BITS-1:0] do_deb_cnt [NDRO];
 
+localparam DAQT_DRO_DATA	= 48;
+
 localparam PS_IDLE		= 0;
 localparam PS_CONFIG_DRO_1	= 1;
-localparam PS_WAIT_GRANT	= 2;
-localparam PS_DRO_DATA_1	= 3;
-localparam PS_DRO_DATA_2	= 4;
-localparam PS_DRO_DATA_3	= 5;
-localparam PS_DRO_DATA_4	= 6;
-localparam PS_DRO_DATA_5	= 7;
-localparam PS_MAX		= 7;
+localparam PS_CONFIG_DRO_2	= 2;
+localparam PS_WAIT_GRANT	= 3;
+localparam PS_DRO_DATA_1	= 4;
+localparam PS_DRO_DATA_2	= 5;
+localparam PS_DRO_DATA_3	= 6;
+localparam PS_DRO_DATA_4	= 7;
+localparam PS_DRO_DATA_5	= 8;
+localparam PS_DRO_DAQ_1		= 9;
+localparam PS_DRO_DAQ_2		= 10;
+localparam PS_DRO_DAQ_3		= 11;
+localparam PS_MAX		= 11;
 
 localparam PS_BITS= $clog2(PS_MAX + 1);
 reg [PS_BITS-1:0] state = 0;
@@ -91,6 +109,7 @@ localparam DR_MAX		= 3;
 
 localparam DR_BITS= $clog2(DR_MAX + 1);
 reg [DR_BITS-1:0] dr_state [NDRO];
+reg [NDRO-1:0] use_daq = 0;
 
 integer i;
 initial begin
@@ -178,7 +197,7 @@ always @(posedge clk) begin
 			dr_state[i] <= DR_WAIT_HI;
 			timeout_cnt[i] <= 0;
 		end else if (timeout_cnt[i] == 1 && dclk[i] == 1) begin
-			if (data[i] != prev_data[i] || bits[i] != prev_bits[i])
+			if (data[i] != prev_data[i] || bits[i] != prev_bits[i] || use_daq[i])
 				data_valid[i] <= 1;
 			prev_data[i] <= data[i];
 			prev_bits[i] <= bits[i];
@@ -192,6 +211,8 @@ always @(posedge clk) begin
 	if (cmd_done)
 		cmd_done <= 0;
 	data_ack <= 0;
+	daq_end <= 0;
+	daq_valid <= 0;
 
 	if (state == PS_IDLE && cmd_ready) begin
 		// common to all cmds
@@ -207,17 +228,27 @@ always @(posedge clk) begin
 			enabled[channel] <= 0;
 		else
 			enabled[channel] <= 1;
+		state <= PS_CONFIG_DRO_2;
+	end else if (state == PS_CONFIG_DRO_2) begin
+		use_daq[channel] <= arg_data;
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_IDLE && data_valid) begin
-		invol_req <= 1;
+		if (use_daq & data_valid)
+			daq_req <= 1;
+		else
+			invol_req <= 1;
 		state <= PS_WAIT_GRANT;
 	end else if (state == PS_WAIT_GRANT && invol_grant) begin
 		invol_req <= 0;
+		daq_req <= 0;
 		for (i = 0; i < NDRO; i = i + 1) begin
 			if (data_valid[i]) begin
 				channel <= i;
-				state <= PS_DRO_DATA_1;
+				if (use_daq[i] & daq_grant)
+					state <= PS_DRO_DAQ_1;
+				else if (~use_daq[i] & invol_grant)
+					state <= PS_DRO_DATA_1;
 				i = NDRO;
 			end
 		end
@@ -239,6 +270,22 @@ always @(posedge clk) begin
 		cmd_done <= 1;
 		param_write <= 0;
 		param_data <= RSP_DRO_DATA;
+		state <= PS_IDLE;
+	end else if (state == PS_DRO_DAQ_1) begin
+		param_data[31:24] <= DAQT_DRO_DATA;
+		param_data[23:16] <= channel;
+		param_data[15:0] <= 0;
+		daq_valid <= 1;
+		state <= PS_DRO_DAQ_2;
+	end else if (state == PS_DRO_DAQ_2) begin
+		param_data[31:0] <= data[channel];
+		daq_valid <= 1;
+		data_ack[channel] <= 1;
+		state <= PS_DRO_DAQ_3;
+	end else if (state == PS_DRO_DAQ_3) begin
+		param_data <= starttime[channel];
+		daq_valid <= 1;
+		daq_end <= 1;
 		state <= PS_IDLE;
 	end
 end

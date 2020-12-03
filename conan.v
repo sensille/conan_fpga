@@ -243,6 +243,56 @@ always @(posedge clk) begin
 	end
 end
 
+
+/*
+ * daq notifies
+ */
+reg [31:0] syst_daq_data;
+reg syst_daq_valid = 0;
+reg syst_daq_end = 0;
+reg syst_daq_req = 0;
+wire syst_daq_grant;
+
+localparam DAQT_SYSTIME_SET	= 32;
+localparam DAQT_SYSTIME_ROLLOVER= 33;
+localparam SY_IDLE		= 0;
+localparam SY_WAIT_GRANT	= 1;
+localparam SY_SEND_LOWER	= 2;
+localparam SY_MAX		= 2;
+localparam SY_BITS = $clog2(SY_MAX + 1);
+reg [SY_BITS-1:0] sy_state = SY_IDLE;
+reg [55:0] latched_systime;
+reg send_systime = 0;
+reg send_type = 0;
+always @(posedge clk) begin
+	syst_daq_valid <= 0;
+	syst_daq_end <= 0;
+	if (systime_set_en || systime[27:0] == 1'hfffffff) begin
+		send_systime <= 1;
+		send_type <= systime_set_en;
+	end
+	if (sy_state == SY_IDLE && send_systime) begin
+		syst_daq_req <= 1;
+		send_systime <= 0;
+		latched_systime <= systime;
+		sy_state <= SY_WAIT_GRANT;
+	end else if (sy_state == SY_WAIT_GRANT && syst_daq_grant) begin
+		syst_daq_req <= 0;
+		if (send_type)
+			syst_daq_data[31:24] <= DAQT_SYSTIME_SET;
+		else
+			syst_daq_data[31:24] <= DAQT_SYSTIME_ROLLOVER;
+		syst_daq_data[23:0] <= latched_systime[55:32];
+		syst_daq_valid <= 1;
+		sy_state <= SY_SEND_LOWER;
+	end else if (sy_state == SY_SEND_LOWER) begin
+		syst_daq_data <= latched_systime[31:0];
+		syst_daq_valid <= 1;
+		syst_daq_end <= 1;
+		sy_state <= SY_IDLE;
+	end
+end
+
 /*
  * communication interface to MCU
  */
@@ -448,6 +498,12 @@ command #(
 	.mcu_daq_end(mcu_daq_end),
 	.mcu_daq_req(mcu_daq_req),
 	.mcu_daq_grant(mcu_daq_grant),
+
+	.syst_daq_data(syst_daq_data),
+	.syst_daq_valid(syst_daq_valid),
+	.syst_daq_end(syst_daq_end),
+	.syst_daq_req(syst_daq_req),
+	.syst_daq_grant(syst_daq_grant),
 
 	.req_shutdown(req_shutdown),
 	.debug(cmd_debug),

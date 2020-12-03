@@ -96,6 +96,12 @@ module command #(
 	input wire mcu_daq_req,
 	output wire mcu_daq_grant,
 
+	input wire [31:0] syst_daq_data,
+	input wire syst_daq_end,
+	input wire syst_daq_valid,
+	input wire syst_daq_req,
+	output wire syst_daq_grant,
+
 	/*
 	 * debug
 	 */
@@ -243,14 +249,11 @@ assign daq_valid[DAQ_MCU] = mcu_daq_valid;
 assign daq_end[DAQ_MCU] = mcu_daq_end;
 assign daq_req[DAQ_MCU] = mcu_daq_req;
 assign mcu_daq_grant = daq_grant[DAQ_MCU];
-assign daq_data[DAQ_SYSTIME] = 0;
-assign daq_valid[DAQ_SYSTIME] = 0;
-assign daq_end[DAQ_SYSTIME] = 0;
-assign daq_req[DAQ_SYSTIME] = 0;
-assign daq_data[DAQ_DRO] = 0;
-assign daq_valid[DAQ_DRO] = 0;
-assign daq_end[DAQ_DRO] = 0;
-assign daq_req[DAQ_DRO] = 0;
+assign daq_data[DAQ_SYSTIME] = syst_daq_data;
+assign daq_valid[DAQ_SYSTIME] = syst_daq_valid;
+assign daq_end[DAQ_SYSTIME] = syst_daq_end;
+assign daq_req[DAQ_SYSTIME] = syst_daq_req;
+assign syst_daq_grant = daq_grant[DAQ_SYSTIME];
 
 wire shutdown; /* set by command, never cleared */
 wire [MISSED_BITS-1:0] missed_clock;
@@ -476,6 +479,12 @@ dro #(
 
 	.dro_clk(dro_clk),
 	.dro_do(dro_do),
+
+	.daq_data(daq_data[DAQ_DRO]),
+	.daq_valid(daq_valid[DAQ_DRO]),
+	.daq_end(daq_end[DAQ_DRO]),
+	.daq_req(daq_req[DAQ_DRO]),
+	.daq_grant(daq_grant[DAQ_DRO]),
 
 	.debug(dro_debug),
 

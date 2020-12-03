@@ -307,7 +307,7 @@ end
 assign debug[0] = tx_state;
 assign debug[5:1] = state;
 assign debug[6] = daqo_len_ready;
-assign debug[6] = len_ready;
+assign debug[7] = len_ready;
 assign debug[13:8] = next_len;
 assign debug[15:14] = enable;
 
