@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <setjmp.h>
 #include <stdarg.h>
+#include <arpa/inet.h>
 #include <pcre.h>
 #include "Vconan.h"
 #include "verilated.h"
@@ -36,6 +37,7 @@ static int color_disabled = 1;
 #define CMD_CONFIG_ETHER	24
 #define CMD_ETHER_MD_READ	25
 #define CMD_ETHER_MD_WRITE	26
+#define CMD_ETHER_SET_STATE	27
 
 #define RSP_GET_VERSION		0
 #define RSP_GET_TIME		1
@@ -2405,13 +2407,114 @@ printf("snd bitcnt %d buf %x\n", eth->bitcnt, eth->sndbuf);
 }
 
 static void
+check_packet(sim_t *sp, ether_t *eth, uint32_t *exp_data, int exp_len, int *seq)
+{
+	Vconan *tb = sp->tb;
+	int i;
+	int j;
+	int plen;
+	uint32_t buf[500];
+	uint8_t *p = (uint8_t *)buf;
+
+	/* wait for packet */
+	for (i = 0; i < 481000; ++i) {
+		if (*eth->tx_en)
+			break;
+		yield(sp);
+	}
+	if (i == 481000)
+		fail("no packet found\n");
+
+	/* first receive all bits */
+	for (i = 0; i < 1530; ++i) {
+		uint8_t b = 0;
+
+		if (*eth->tx_en == 0)
+			break;
+		for (j = 0; j < 4; ++j) {
+			if (*eth->tx_en == 0)
+				fail("tx_en deasserted mid-octet\n");
+			b = (b >> 2) | (*eth->tx0 << 6) | (*eth->tx1 << 7);
+			yield(sp);
+		}
+		p[i] = b;
+	}
+	if (i > 1522)
+		fail("packet too long\n");
+	plen = i;
+
+	printf("PACKET: ");
+	for (i = 0; i < plen; ++i)
+		printf("%02x ", p[i]);
+	printf("\n");
+
+	/* check IPG */
+	for (i = 0; i < 12 * 4; ++i) {
+		if (*eth->tx0 || *eth->tx1)
+			fail("activity during inter packet gap\n");
+		yield(sp);
+	}
+
+	if (plen < 68)
+		fail("frame too short\n");
+	if ((plen % 4) != 0)
+		fail("frame length not multiple of 4\n");
+
+	if (ntohl(buf[0]) != 0x55555555)
+		fail("bad preamble1\n");
+	if (ntohl(buf[1]) != 0x555555d5)
+		fail("bad preamble2\n");
+	if (ntohl(buf[2]) != 0x66554433)
+		fail("bad dst mac\n");
+	if (ntohl(buf[3]) != 0x22111234)
+		fail("bad dst/src mac\n");
+	if (ntohl(buf[4]) != 0x56789abc)
+		fail("bad src mac\n");
+	if ((ntohl(buf[5]) & 0xffff0000) != 0x51390000)
+		fail("ether type/fill %08x\n", ntohl(buf[5]));
+	if ((ntohl(buf[5]) & 0xfff) != *seq)
+		fail("seq %d != %d\n", ntohl(buf[5]) & 0xffff, *seq);
+	(*seq)++;
+
+	/* calculate crc */
+	uint32_t crc = 0xffffffff;
+	for (i = 8; i < plen - 4; ++i) {
+		unsigned int byte, mask;
+
+		byte = p[i];
+		crc = crc ^ byte;
+		for (j = 7; j >= 0; j--) {
+			mask = -(crc & 1);
+			crc = (crc >> 1) ^ (0xEDB88320 & mask);
+		}
+	}
+	crc = ~crc;
+	uint32_t recv_crc = buf[plen / 4 - 1]; /* no bswap */
+	if (recv_crc != crc)
+		fail("crc differ: recv %08x calc %08x\n", recv_crc, crc);
+
+	if (plen != 28 + (exp_len < 11 ? 11 : exp_len) * 4)
+		fail("bad packet length %d\n", plen);
+	for (i = 0; i < exp_len; ++i) {
+		if (ntohl(buf[6 + i]) != exp_data[i])
+			fail("bad packet contents at %d: is %x should %x\n",
+				i, ntohl(buf[6 + i]), exp_data[i]);
+	}
+	for (i = exp_len; i < 11; ++i)
+		if (buf[6 + i] != 0xffffffff)
+			fail("bad packet filler at %i\n", i);
+}
+
+static void
 test_ether(sim_t *sp)
 {
 	Vconan *tb = sp->tb;
 	int i;
 	int j;
 	uint32_t rsp[100];
+	uint32_t buf[500];
 	ether_t eth = { 0 };
+	int seq = 0;
 
 	eth.mdio = &tb->pmod2_4;
 	eth.mdio_in = &tb->eth_mdio_in1;
@@ -2427,7 +2530,7 @@ test_ether(sim_t *sp)
 	for (i = 0; i < 32; ++i)
 		eth.regs[i] = (i << 8) | i;
 
-#if 0
+#if 1
 	watch_add(sp->wp, "u_command.msg_state$", "msg_state", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_ether.cmd_ready$", "cmd_ready", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_ether.cmd_done$", "cmd_done", NULL, FORM_DEC, WF_ALL);
@@ -2472,20 +2575,56 @@ test_ether(sim_t *sp)
 	if (rsp[2] != 0x1234)
 		fail("ether read bad register content %x\n", rsp[2]);
 
-	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_ETHER, 0, 305419896, 2596134054, 843157389);
+	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_ETHER, 0, 0x12345678, 0x9abc6655, 0x44332211);
 	delay(sp, 1000);
 	/* check mac addresses */
 	printf("src_mac %llx\n", tb->conan__DOT__u_command__DOT__u_ether__DOT__src_mac);
 	printf("dst_mac %llx\n", tb->conan__DOT__u_command__DOT__u_ether__DOT__dst_mac);
-	if (tb->conan__DOT__u_command__DOT__u_ether__DOT__src_mac != 0x123456789abdllu)
+	if (tb->conan__DOT__u_command__DOT__u_ether__DOT__src_mac != 0x123456789abcllu)
 		fail("bad src_mac\n");
-	if (tb->conan__DOT__u_command__DOT__u_ether__DOT__dst_mac != 0xdca632418f8dllu)
+	if (tb->conan__DOT__u_command__DOT__u_ether__DOT__dst_mac != 0x665544332211llu)
 		fail("bad dst_mac\n");
 
+#if 1
+	watch_clear(sp->wp);
+	watch_add(sp->wp, "u_daq.rptr$", "rptr", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.wptr$", "wptr", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.data_ring_full$", "full", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.data_ring_empty$", "empty", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.discarded_pkts$", "disc_p", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_mac.enable$", "enable", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_mac.state$", "state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_mac.len_ready$", "len_ready", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_mac.next_len$", "next_len", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_mac.daqo_len$", "len", NULL, FORM_DEC, WF_ALL);
+#endif
+
+	watch_add(sp->wp, "pmod2_1", "tx_en", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "pmod1_4", "tx0", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "pmod1_3", "tx1", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "mculog_u.daq_data", "m_data", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "mculog_u.daq_valid", "m_v", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "mculog_u.daq_end", "m_e", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "mculog_u.daq_req", "m_req", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "mculog_u.daq_grant", "m_gr", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "mculog_u.state", "m_state", NULL, FORM_DEC, WF_ALL);
+
+	/* drain existing packets */
+	uart_send_vlq_and_wait(sp, 3, CMD_ETHER_SET_STATE, 0, 1);
+	delay(sp, 20000);
+
+	uart_send_vlq_and_wait(sp, 3, CMD_ETHER_SET_STATE, 0, 2); /* set running */
+	/* send something to the mcu to get some logging */
+	delay(sp, 10);
+	uart_send_vlq(sp, 1, CMD_GET_VERSION);
+	wait_for_uart_vlq(sp, 4, rsp);
+
+	check_packet(sp, &eth, buf, 10, &seq);
 #if 0
 	/* wait for testframe */
 	delay(sp, 25000000);
 #endif
+	watch_clear(sp->wp);
 	sp->ether = NULL;
 }
 

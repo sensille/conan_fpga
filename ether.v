@@ -11,6 +11,7 @@ module ether #(
 	parameter CMD_ETHER_MD_READ = 0,
 	parameter CMD_ETHER_MD_WRITE = 0,
 	parameter RSP_ETHER_MD_READ = 0,
+	parameter CMD_ETHER_SET_STATE = 0,
 	parameter PACKET_WAIT_FRAC = 0
 ) (
 	input wire clk,
@@ -50,10 +51,22 @@ module ether #(
 
 reg [47:0] src_mac = 48'hffffffffffff;
 reg [47:0] dst_mac = 48'hffffffffffff;
+localparam ES_QUEUE	= 0;
+localparam ES_DISCARD	= 1;
+localparam ES_RUNNING	= 2;
+reg [1:0] enable_state[NETHER];
+initial begin
+	integer i;
+	for (i = 0; i < NETHER; i = i + 1)
+		enable_state[i] = ES_QUEUE;
+end
 mac #(
 	.HZ(HZ),
 	.MAC_PACKET_BITS(MAC_PACKET_BITS),
-	.PACKET_WAIT_FRAC(PACKET_WAIT_FRAC)
+	.PACKET_WAIT_FRAC(PACKET_WAIT_FRAC),
+	.ES_QUEUE(ES_QUEUE),
+	.ES_DISCARD(ES_DISCARD),
+	.ES_RUNNING(ES_RUNNING)
 ) u_mac (
 	.clk(clk),
 	.tx0(eth_tx0[0]),
@@ -69,6 +82,8 @@ mac #(
 
 	.src_mac(src_mac),
 	.dst_mac(dst_mac),
+
+	.enable_in(enable_state[0]),
 
 	.debug(debug)
 );
@@ -105,7 +120,8 @@ localparam PS_ETHER_MD_DONE		= 11;
 localparam PS_ETHER_MD_RESPOND		= 12;
 localparam PS_ETHER_MD_RESPOND_1	= 13;
 localparam PS_ETHER_MD_RESPOND_2	= 14;
-localparam PS_MAX			= 14;
+localparam PS_ETHER_SET_STATE_1		= 15;
+localparam PS_MAX			= 15;
 localparam PS_BITS = $clog2(PS_MAX + 1);
 reg [PS_BITS-1:0] state = PS_IDLE;
 
@@ -139,6 +155,8 @@ always @(posedge clk) begin
 		end else if (cmd == CMD_ETHER_MD_READ) begin
 			state <= PS_ETHER_MD_1;
 			rdwr <= 1;
+		end else if (cmd == CMD_ETHER_SET_STATE) begin
+			state <= PS_ETHER_SET_STATE_1;
 		end else begin
 			cmd_done <= 1;
 		end
@@ -230,6 +248,10 @@ always @(posedge clk) begin
 	end else if (state == PS_ETHER_MD_RESPOND_2) begin
 		param_data <= RSP_ETHER_MD_READ;
 		param_write <= 0;
+		cmd_done <= 1;
+		state <= PS_IDLE;
+	end else if (state == PS_ETHER_SET_STATE_1) begin
+		enable_state[channel] <= arg_data;
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end

@@ -226,11 +226,35 @@ assign drclk = _drclk[1];
 `endif
 
 /*
+ * on-board LEDs
+ */
+reg [63:0] systime = 0;
+wire [63:0] systime_set;
+wire systime_set_en;
+reg [7:0] leds = 8'b00000001;
+assign { led8, led7, led6, led5, led4, led3, led2, led1 } = leds;
+always @(posedge clk) begin
+	if (systime_set_en)
+		systime <= systime_set;
+	else
+		systime <= systime + 1;
+	if (systime[21:0] == 0) begin
+		leds <= { leds[6:0], leds[7] };
+	end
+end
+
+/*
  * communication interface to MCU
  */
 wire [7:0] msg_data;
 wire msg_ready;
 wire msg_rd_en;
+
+wire [31:0] mcu_daq_data;
+wire mcu_daq_valid;
+wire mcu_daq_end;
+wire mcu_daq_req;
+wire mcu_daq_grant;
 
 /* max length of a packet MCU -> host */
 /* address width of fifo */
@@ -251,6 +275,7 @@ framing #(
 	.HZ(HZ)
 ) u_framing (
 	.clk(clk),
+	.systime(systime[31:0]),
 
 	.rx(fpga1),
 	.tx(fpga2),
@@ -275,6 +300,15 @@ framing #(
 	.send_ring_wr_en(send_ring_wr_en),
 	.send_ring_full(),
 
+	/*
+	 * data acquisition outlet
+	 */
+	.daq_data(mcu_daq_data),
+	.daq_valid(mcu_daq_valid),
+	.daq_end(mcu_daq_end),
+	.daq_req(mcu_daq_req),
+	.daq_grant(mcu_daq_grant),
+
 	/* reset */
 	.error(frame_error),
 	.clr(frame_reset)
@@ -284,23 +318,6 @@ framing #(
 wire [52:0] cmd_debug;
 wire [15:0] step_debug;
 
-/*
- * on-board LEDs
- */
-reg [63:0] systime = 0;
-wire [63:0] systime_set;
-wire systime_set_en;
-reg [7:0] leds = 8'b00000001;
-assign { led8, led7, led6, led5, led4, led3, led2, led1 } = leds;
-always @(posedge clk) begin
-	if (systime_set_en)
-		systime <= systime_set;
-	else
-		systime <= systime + 1;
-	if (systime[21:0] == 0) begin
-		leds <= { leds[6:0], leds[7] };
-	end
-end
 
 wire [NUART-1:0] uart_in;
 wire [NUART-1:0] uart_out;
@@ -425,6 +442,12 @@ command #(
 	.time_out(systime_set),
 	.time_out_en(systime_set_en),
 	.timesync_latch_in(fpga5),
+
+	.mcu_daq_data(mcu_daq_data),
+	.mcu_daq_valid(mcu_daq_valid),
+	.mcu_daq_end(mcu_daq_end),
+	.mcu_daq_req(mcu_daq_req),
+	.mcu_daq_grant(mcu_daq_grant),
 
 	.req_shutdown(req_shutdown),
 	.debug(cmd_debug),
@@ -641,6 +664,7 @@ assign ldata[116:64] = cmd_debug;
 
 assign ldata[31:0] = systime[43:12];
 
+`ifdef not_anymore
 /* step watcher */
 wire [5:0] d_step = { step6, step5, step4, step3, step2, step1 };
 reg [5:0] prev_d_step = 0;
@@ -674,6 +698,9 @@ assign ldata[37:32] = d_alert;
 assign ldata[38] = armed;
 assign ldata[39] = 0;
 assign ldata[47:40] = d_idle[5][31:24];
+`else
+assign ldata[47:32] = 0;
+`endif
 assign ldata[63:48] = step_debug;
 
 /*

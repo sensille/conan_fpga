@@ -90,6 +90,12 @@ module command #(
 	input wire timesync_latch_in,
 	input wire req_shutdown,
 
+	input wire [31:0] mcu_daq_data,
+	input wire mcu_daq_end,
+	input wire mcu_daq_valid,
+	input wire mcu_daq_req,
+	output wire mcu_daq_grant,
+
 	/*
 	 * debug
 	 */
@@ -148,7 +154,8 @@ localparam CMD_SD_QUEUE			= 23;
 localparam CMD_CONFIG_ETHER		= 24;
 localparam CMD_ETHER_MD_READ		= 25;
 localparam CMD_ETHER_MD_WRITE		= 26;
-localparam NCMDS			= 27;
+localparam CMD_ETHER_SET_STATE		= 27;
+localparam NCMDS			= 28;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
@@ -211,6 +218,7 @@ initial begin
 	cmdtab[CMD_CONFIG_ETHER] = { UNIT_ETHER, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_ETHER_MD_READ] = { UNIT_ETHER, ARGS_3, 1'b0, 1'b1 };
 	cmdtab[CMD_ETHER_MD_WRITE] = { UNIT_ETHER, ARGS_4, 1'b0, 1'b0 };
+	cmdtab[CMD_ETHER_SET_STATE] = { UNIT_ETHER, ARGS_2, 1'b0, 1'b0 };
 end
 
 /*
@@ -226,21 +234,23 @@ wire [NDAQ-1:0] daq_valid;
 wire [NDAQ-1:0] daq_end;
 wire [NDAQ-1:0] daq_req;
 wire [NDAQ-1:0] daq_grant;
-localparam DAQT_AS5311_DAT = 0;
-localparam DAQT_AS5311_MAG = 1;
+/* 0-15 reserved for MCU */
+localparam DAQT_AS5311_DAT = 16;
+localparam DAQT_AS5311_MAG = 17;
 
-assign daq_data[0] = 0;
-assign daq_valid[0] = 0;
-assign daq_end[0] = 0;
-assign daq_req[0] = 0;
-assign daq_data[1] = 0;
-assign daq_valid[1] = 0;
-assign daq_end[1] = 0;
-assign daq_req[1] = 0;
-assign daq_data[3] = 0;
-assign daq_valid[3] = 0;
-assign daq_end[3] = 0;
-assign daq_req[3] = 0;
+assign daq_data[DAQ_MCU] = mcu_daq_data;
+assign daq_valid[DAQ_MCU] = mcu_daq_valid;
+assign daq_end[DAQ_MCU] = mcu_daq_end;
+assign daq_req[DAQ_MCU] = mcu_daq_req;
+assign mcu_daq_grant = daq_grant[DAQ_MCU];
+assign daq_data[DAQ_SYSTIME] = 0;
+assign daq_valid[DAQ_SYSTIME] = 0;
+assign daq_end[DAQ_SYSTIME] = 0;
+assign daq_req[DAQ_SYSTIME] = 0;
+assign daq_data[DAQ_DRO] = 0;
+assign daq_valid[DAQ_DRO] = 0;
+assign daq_end[DAQ_DRO] = 0;
+assign daq_req[DAQ_DRO] = 0;
 
 wire shutdown; /* set by command, never cleared */
 wire [MISSED_BITS-1:0] missed_clock;
@@ -555,7 +565,7 @@ sd #(
 	.shutdown(shutdown)
 );
 
-localparam MAC_PACKET_BITS = 8; /* 2^8 * 4 bytes > 1500 */
+localparam MAC_PACKET_BITS = 9; /* 2^9 * 4 bytes > 1500 */
 wire [31:0] daqo_data;
 wire daqo_data_rd_en;
 wire [MAC_PACKET_BITS-1:0] daqo_len;
@@ -598,6 +608,7 @@ ether #(
 	.CMD_CONFIG_ETHER(CMD_CONFIG_ETHER),
 	.CMD_ETHER_MD_READ(CMD_ETHER_MD_READ),
 	.CMD_ETHER_MD_WRITE(CMD_ETHER_MD_WRITE),
+	.CMD_ETHER_SET_STATE(CMD_ETHER_SET_STATE),
 	.RSP_ETHER_MD_READ(RSP_ETHER_MD_READ),
 	.CMD_BITS(CMD_BITS),
 	.PACKET_WAIT_FRAC(PACKET_WAIT_FRAC)

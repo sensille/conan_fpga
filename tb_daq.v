@@ -16,7 +16,9 @@ module tb_daq #(
 	input wire [NDAQ-1:0] daq_valid,
 	input wire [NDAQ-1:0] daq_end,
 	input wire [NDAQ-1:0] daq_req,
-	output wire [NDAQ-1:0] daq_grant
+	output wire [NDAQ-1:0] daq_grant,
+
+	input wire [1:0] enable
 );
 
 localparam MAC_PACKET_BITS = 9; /* 2^9 * 4 bytes > 1500 */
@@ -60,7 +62,10 @@ reg [47:0] dst_mac = 48'h665544332211;
 mac #(
 	.HZ(HZ),
 	.MAC_PACKET_BITS(MAC_PACKET_BITS),
-	.PACKET_WAIT_FRAC(100)
+	.PACKET_WAIT_FRAC(100),
+	.ES_QUEUE(0),
+	.ES_DISCARD(1),
+	.ES_RUNNING(2)
 ) u_mac (
 	.clk(clk),
 
@@ -77,6 +82,8 @@ mac #(
 
 	.src_mac(src_mac),
 	.dst_mac(dst_mac),
+
+	.enable_in(enable),
 
 	.debug()
 );

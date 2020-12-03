@@ -4,7 +4,10 @@
 module mac #(
 	parameter HZ = 0,
 	parameter MAC_PACKET_BITS = 0,
-	parameter PACKET_WAIT_FRAC = 0
+	parameter PACKET_WAIT_FRAC = 0,
+	parameter ES_QUEUE = 0,
+	parameter ES_DISCARD = 0,
+	parameter ES_RUNNING = 0
 ) (
 	input wire clk,
 
@@ -21,6 +24,8 @@ module mac #(
 
 	input wire [47:0] src_mac,
 	input wire [47:0] dst_mac,
+
+	input wire [1:0] enable_in,
 
 	output wire [15:0] debug
 );
@@ -70,6 +75,13 @@ always @(posedge clk) begin
 	daqo_len_rd_en <= len_rd_en_sync_1 != len_rd_en_sync_2;
 end
 
+reg [1:0] enable = 0;
+reg [1:0] enable_sync_1 = 0;
+always @(posedge clk) begin
+	enable_sync_1 <= enable_in;
+	enable <= enable_sync_1;
+end
+
 /*
  * we build frames always in multiples of 4 bytes
  * preamble is 8 bytes
@@ -97,6 +109,7 @@ localparam MAX_PACKET		= 375;
 reg [3:0] len_wait = 0;
 reg [MAC_PACKET_BITS-1:0] data_len;
 reg [MAC_PACKET_BITS-1:0] next_len;
+reg [MAC_PACKET_BITS-1:0] discard_len;
 reg crc_data_ready;
 reg init_crc = 0;
 reg [31:0] next_data;
@@ -118,8 +131,20 @@ always @(posedge rx_clk) begin
 		len_wait <= len_wait - 1;
 	if (packet_wait)
 		packet_wait <= packet_wait - 1;
-	if (len_wait == 0 && len_ready) begin
-		if (next_len + daqo_len < MAX_PACKET) begin
+	if (discard_len != 0) begin
+		if (len_wait == 0) begin
+			/* we use len_wait also for the data queue here */
+			len_wait <= 12;
+			data_rd_en <= !data_rd_en;	/* toggle triggers one read */
+			discard_len <= discard_len - 1;
+		end
+	end else if (len_wait == 0 && len_ready) begin
+		if (enable == ES_DISCARD) begin
+			discard_len <= daqo_len;
+			len_rd_en <= !len_rd_en; /* toggle triggers one read */
+		end else if (enable == ES_QUEUE) begin
+			/* just leave the packet in the queue */
+		end else if (next_len + daqo_len <= MAX_PACKET) begin
 			next_len <= next_len + daqo_len;
 			len_rd_en <= !len_rd_en; /* toggle triggers one read */
 			/*

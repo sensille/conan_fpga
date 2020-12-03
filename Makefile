@@ -23,8 +23,10 @@ $(TARGET).json: $(SRC) $(TARGET).lpf Makefile
 	ecppack --compress --svf-rowsize 100000 --svf $(TARGET).svf $< $@
 
 verilate: vrun
-v: vrun
-test: vrun
+v: vrun vrun_daq
+test: v
+v1: vrun_daq
+v2: vrun
 
 obj_dir/$(TARGET).mk: $(SRC) Makefile
 	verilator -GPACKET_WAIT_FRAC=100 --public -Wall -CFLAGS -g --exe --cc $(TARGET).v verilator.vlt tb.cpp
@@ -41,7 +43,7 @@ obj_dir/V$(TARGET): obj_dir/vsyms.h
 
 # daq testbench
 obj_dir_daq/tb_daq.mk: $(DAQ_SRC) Makefile
-	verilator --public -Wall -Mdir obj_dir_daq -CFLAGS -g --exe --cc tb_daq.v verilator.vlt tb_daq.cpp
+	verilator -GPACKET_WAIT_FRAC=100 --public -Wall -Mdir obj_dir_daq -CFLAGS -g --exe --cc tb_daq.v verilator.vlt tb_daq.cpp
 
 obj_dir_daq/Vtb_daq__ALL.a: obj_dir_daq/tb_daq.mk
 	make -j 4 -C obj_dir_daq -f Vtb_daq.mk Vtb_daq__ALL.a
@@ -53,8 +55,10 @@ obj_dir_daq/vsyms.h: obj_dir_daq/tb_daq.mk
 obj_dir_daq/Vtb_daq: obj_dir_daq/vsyms.h
 	LDLIBS=$(LDLIBS) make -C obj_dir_daq -f Vtb_daq.mk
 
-vrun: obj_dir/Vconan obj_dir_daq/Vtb_daq
+vrun_daq: obj_dir_daq/Vtb_daq
 	obj_dir_daq/Vtb_daq
+
+vrun: obj_dir/Vconan
 	obj_dir/V$(TARGET)
 
 .PRECIOUS: $(TARGET).json $(TARGET)_out.config

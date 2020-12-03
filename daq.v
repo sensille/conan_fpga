@@ -14,7 +14,7 @@ module daq #(
 	input wire [NDAQ-1:0] daq_req,
 	output reg [NDAQ-1:0] daq_grant = 0,
 
-	output reg [31:0] daqo_data,
+	output wire [31:0] daqo_data,
 	input wire daqo_data_rd_en,
 	output wire [MAC_PACKET_BITS-1:0] daqo_len,
 	output wire daqo_len_ready,
@@ -22,7 +22,8 @@ module daq #(
 );
 
 localparam NDAQ_BITS = $clog2(NDAQ);
-localparam BUFFER_DEPTH = 4096;
+/* hopefully enough to fully hold the startup */
+localparam BUFFER_DEPTH = 8192;	/* hopefully enough to fully hold the startup */
 localparam BUFFER_BITS = $clog2(BUFFER_DEPTH);
 
 wire [31:0] daq_data[NDAQ];
@@ -58,29 +59,24 @@ fifo #(
 	.elemcnt()
 );
 
-reg [31:0] data_fifo_data;
-reg data_fifo_wr_en;
-wire data_fifo_full;
-fifo #(
-	.DATA_WIDTH(32),
-	.ADDR_WIDTH(BUFFER_BITS)
-) data_fifo (
-	.clk(clk),
-	.clr(1'b0),
+reg [31:0] data_ring[BUFFER_DEPTH];
+reg [BUFFER_BITS-1:0] rptr;
+reg [BUFFER_BITS-1:0] wptr;
+reg [BUFFER_BITS-1:0] saved_wptr;
+reg inited = 0;
+wire data_ring_empty = rptr == wptr;
+wire data_ring_full = rptr == wptr + 1;
 
-	// write side
-	.din(data_fifo_data),
-	.wr_en(data_fifo_wr_en),
-	.full(data_fifo_full),
+always @(posedge clk) begin
+	if (!inited) begin
+		rptr <= 0;
+		inited <= 1;
+	end
+	daqo_data <= data_ring[rptr];
+	if (daqo_data_rd_en && !data_ring_empty)
+		rptr <= rptr + 1;
+end
 
-	// read side
-	.dout(daqo_data),
-	.rd_en(daqo_data_rd_en),
-	.empty(),
-
-	// status
-	.elemcnt()
-);
 assign daqo_len_ready = !len_fifo_empty;
 
 localparam DA_IDLE	= 0;
@@ -89,33 +85,57 @@ localparam DA_MAX	= 1;
 localparam DA_BITS = $clog2(DA_MAX + 1);
 reg [DA_BITS-1:0] state = DA_IDLE;
 integer i;
+reg discard = 0;
 reg [NDAQ_BITS-1:0] daq;
+reg [23:0] discarded_pkts = 0;
 always @(posedge clk) begin
-	data_fifo_wr_en <= 0;
+	if (!inited)
+		wptr <= 0;
 	len_fifo_wr_en <= 0;
 	for (i = 0; i < NDAQ; i = i + 1) begin
 		if (daq_grant[i])
 			daq_grant[i] <= 0;
 	end
-	/* for now just use a priority encoder */
-	if (state == DA_IDLE) begin
+	if (state == DA_IDLE && discarded_pkts && !data_ring_full) begin
+		data_ring[wptr] <= { 8'hfe, discarded_pkts };
+		wptr <= wptr + 1;
+		discarded_pkts <= 0;
+		len_fifo_data <= 1;
+		len_fifo_wr_en <= 1;
+	end else if (state == DA_IDLE) begin
+		/* for now just use a priority encoder */
 		for (i = 0; i < NDAQ; i = i + 1) begin
 			if (daq_req[i]) begin
 				daq <= i;
 				daq_grant[i] <= 1;
 				len_fifo_data <= 0;
+				saved_wptr <= wptr;
 				state <= DA_GRANTED;
 				i = NDAQ;
 			end
 		end
 	end else if (state == DA_GRANTED) begin
 		if (daq_valid[daq]) begin
-			data_fifo_data <= daq_data[daq];
-			data_fifo_wr_en <= 1;
-			len_fifo_data <= len_fifo_data + 1;
+			if (!discard) begin
+				if (data_ring_full) begin
+					/* revert wptr */
+					wptr <= saved_wptr;
+					discard <= 1;
+				end else begin
+					data_ring[wptr] <= daq_data[daq];
+					wptr <= wptr + 1;
+					len_fifo_data <= len_fifo_data + 1;
+				end
+			end
 		end
 		if (daq_end[daq]) begin
-			len_fifo_wr_en <= 1;
+			if (!discard) begin
+				len_fifo_wr_en <= 1;
+			end else begin
+				if (discarded_pkts != 24'hffffff)
+					discarded_pkts <= discarded_pkts + 1;
+			end
+			discard <= 0;
 			state <= DA_IDLE;
 		end
 	end

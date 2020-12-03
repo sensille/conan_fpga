@@ -9,6 +9,7 @@ module framing #(
 	parameter HZ = 0
 ) (
 	input wire clk,
+	input wire [31:0] systime,
 
 	input wire rx,
 	output wire tx,
@@ -32,6 +33,12 @@ module framing #(
 	input wire [7:0] send_ring_data,
 	input wire send_ring_wr_en,
 	output wire send_ring_full,
+
+	output wire [31:0] daq_data,
+	output wire daq_end,
+	output wire daq_valid,
+	output wire daq_req,
+	input wire daq_grant,
 
 	/* error, reset */
 	output reg error = 0,
@@ -75,6 +82,24 @@ uart #(
 	.is_receiving(),
 	.is_transmitting(tx_transmitting),
 	.recv_error()
+);
+
+uartlog #(
+	.HZ(HZ)
+) mculog_u (
+	.clk(clk),
+	.systime(systime),
+
+	.tx_data(tx_data),
+	.tx_en(tx_en),
+	.rx_data(rx_data),
+	.rx_ready(rx_ready),
+
+	.daq_data(daq_data),
+	.daq_valid(daq_valid),
+	.daq_end(daq_end),
+	.daq_req(daq_req),
+	.daq_grant(daq_grant)
 );
 
 reg [7:0] recv_ring [RING_SIZE-1:0];

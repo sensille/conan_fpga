@@ -513,7 +513,8 @@ check_packet(sim_t *sp, uint32_t *exp_data, int exp_len, int *seq)
 		fail("bad packet length %d\n", plen);
 	for (i = 0; i < exp_len; ++i) {
 		if (ntohl(buf[6 + i]) != exp_data[i])
-			fail("bad packet contents at %d\n", i);
+			fail("bad packet contents at %d: is %x should %x\n",
+				i, ntohl(buf[6 + i]), exp_data[i]);
 	}
 	for (i = exp_len; i < 11; ++i)
 		if (buf[6 + i] != 0xffffffff)
@@ -533,6 +534,7 @@ send_packet(sim_t *sp, int channel, uint32_t *buf, int len)
 	for (i = 0; i < 1000; ++i) {
 		if (tb->daq_grant & mask)
 			break;
+		yield(sp);
 	}
 	if (i == 1000)
 		fail("grant not set\n");
@@ -556,9 +558,11 @@ test_daq(sim_t *sp)
 	Vtb_daq *tb = sp->tb;
 	int i;
 	uint32_t starttime;
-	uint32_t buf[1000];
+	uint32_t buf[10000];
 	int len;
 	int seq = 0;
+	int first_packet_len;
+	int first_packet_done;
 
 	tb->daq_req = 0;
 
@@ -572,15 +576,15 @@ test_daq(sim_t *sp)
 	watch_add(sp->wp, "u_daq.state$", "d_state", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "^daqo_len_ready$", "len_ready", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "^daqo_len$", "len", NULL, FORM_DEC, WF_ALL);
-#if 0
+#if 1
 	watch_add(sp->wp, "^daqo_data$", "data", NULL, FORM_HEX, WF_ALL);
 #endif
 	watch_add(sp->wp, "^daqo_len_rd_en$", "len_rd_en", NULL, FORM_BIN, WF_ALL);
 	watch_add(sp->wp, "^daqo_data_rd_en$", "data_rd_en", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_mac.next_len$", "n_len", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_mac.data_len$", "d_len", NULL, FORM_DEC, WF_ALL);
+#if 0
 	watch_add(sp->wp, "u_mac.state$", "m_state", NULL, FORM_DEC, WF_ALL);
-	watch_add(sp->wp, "u_mac.next_len$", "next_len", NULL, FORM_DEC, WF_ALL);
-	watch_add(sp->wp, "u_mac.data_len$", "data_len", NULL, FORM_DEC, WF_ALL);
-#if 1
 	watch_add(sp->wp, "u_mac.tx_state$", "t_state", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_mac.tx_dicnt$", "dicnt", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_mac.next_eof$", "n_eof", NULL, FORM_DEC, WF_ALL);
@@ -597,6 +601,12 @@ test_daq(sim_t *sp)
 	watch_add(sp->wp, "u_mac.crc$", "crc", NULL, FORM_HEX, WF_ALL);
 	watch_add(sp->wp, "u_mac.crc_data", "crc_data", NULL, FORM_HEX, WF_ALL);
 #endif
+	watch_add(sp->wp, "u_daq.rptr$", "rptr", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.wptr$", "wptr", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.data_ring_full$", "full", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.data_ring_empty$", "empty", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.discarded_pkts$", "disc_p", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_mac.enable$", "enable", NULL, FORM_DEC, WF_ALL);
 
 	delay(sp, 1000);
 
@@ -607,6 +617,7 @@ test_daq(sim_t *sp)
 	tb->daq_data[4] = 0xffeeddcc;
 	tb->daq_valid = 0;
 	tb->daq_end = 0;
+	tb->enable = 2;	/* running */
 
 	delay(sp, 10);
 
@@ -650,11 +661,17 @@ test_daq(sim_t *sp)
 	 * send enough data to fill 1 1/2 packets. the first one has to arrive
 	 * full
 	 * spread over some channels
+	 * we set the daq to queueing again. this way we don't need to receive
+	 * while filling the buffer
 	 */
+	tb->enable = 0;
+	delay(sp, 2);
 	srand(0);
-	for (i = 0; i < 500; ++i)
+	first_packet_len = 0;
+	first_packet_done = 0;
+	for (i = 0; i < 10000; ++i)
 		buf[i] = rand();
-	
+
 	for (i = 0; i < 500;) {
 		int len = rand() % 9 + 1;
 		int channel = rand() % 5;
@@ -665,15 +682,60 @@ test_daq(sim_t *sp)
 		send_packet(sp, channel, buf + i, len);
 		delay(sp, 1 + rand() % 20);
 		i += len;
+		if (!first_packet_done && first_packet_len + len <= 375) {
+			first_packet_len += len;
+		} else {
+			first_packet_done = 1;
+		}
 	}
 
-#if 0
-	check_packet(sp, buf, 375, &seq);
-	check_packet(sp, buf + 375, 500 - 375, &seq);
-#else
-	delay(sp, 50000);
-#endif
-	
+	/* now set the maschine to running again and let the buffer drain */
+	tb->enable = 2; /* running */
+	check_packet(sp, buf, first_packet_len, &seq);
+	check_packet(sp, buf + first_packet_len, 500 - first_packet_len, &seq);
+	delay(sp, 1000);
+
+	/* test discard mode */
+	tb->enable = 1; /* discard */
+	delay(sp, 2);
+	for (i = 0; i < 100; i += 3)
+		send_packet(sp, 0, buf + i, 3);
+	/* give it some time to discard */
+	delay(sp, 2000);
+	if (tb->tb_daq__DOT__daqo_len_ready)
+		fail("packets not discarded\n");
+
+	tb->enable = 0; /* queue */
+	delay(sp, 2);
+
+	/*
+	 * fill the whole buffer and see that new packets get discarded properly
+	 */
+	for (i = 0; i < 8192 - 16; i += 16)
+		send_packet(sp, 0, buf + i, 16);
+	send_packet(sp, 0, buf + i, 13);
+	/* this packet is supposed to be discarded */
+	send_packet(sp, 0, buf + i + 14, 6);
+	/* this packet still fits */
+	send_packet(sp, 0, buf + i + 14, 1);
+	/* these will be discarded again */
+	send_packet(sp, 0, buf + i + 14, 8);
+	send_packet(sp, 0, buf + i + 14, 4);
+	send_packet(sp, 0, buf + i + 20, 3);
+
+	tb->enable = 2; /* running */
+	delay(sp, 2);
+	for (i = 0; i < 8192 - 16 - 368; i += 368)
+		check_packet(sp, buf + i, 368, &seq);
+	/* patch the discard marker into the expected buffer */
+	buf[(8192 - 16) + 13] = 0xfe000001;
+	buf[(8192 - 16) + 15] = 0xfe000003;
+	check_packet(sp, buf + i, (8192 - 16) % 368 + 13 + 3, &seq);
+
+	/* see if all is working again */
+	send_packet(sp, 0, buf + 100, 8);
+	check_packet(sp, buf + 100, 8, &seq);
+
 #if 0
 printf("sleep\n"); sleep(1000);
 #endif
