@@ -14,7 +14,7 @@ module daq #(
 	input wire [NDAQ-1:0] daq_req,
 	output reg [NDAQ-1:0] daq_grant = 0,
 
-	output wire [31:0] daqo_data,
+	output reg [31:0] daqo_data,
 	input wire daqo_data_rd_en,
 	output wire [MAC_PACKET_BITS-1:0] daqo_len,
 	output wire daqo_len_ready,

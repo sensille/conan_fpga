@@ -9,7 +9,7 @@ module framing #(
 	parameter HZ = 0
 ) (
 	input wire clk,
-	input wire [31:0] systime,
+	input wire [63:0] systime,
 
 	input wire rx,
 	output wire tx,

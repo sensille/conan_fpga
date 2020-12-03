@@ -55,8 +55,8 @@ localparam ES_QUEUE	= 0;
 localparam ES_DISCARD	= 1;
 localparam ES_RUNNING	= 2;
 reg [1:0] enable_state[NETHER];
+integer i;
 initial begin
-	integer i;
 	for (i = 0; i < NETHER; i = i + 1)
 		enable_state[i] = ES_QUEUE;
 end

@@ -275,7 +275,7 @@ framing #(
 	.HZ(HZ)
 ) u_framing (
 	.clk(clk),
-	.systime(systime[31:0]),
+	.systime(systime),
 
 	.rx(fpga1),
 	.tx(fpga2),

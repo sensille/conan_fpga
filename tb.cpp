@@ -2406,8 +2406,8 @@ printf("snd bitcnt %d buf %x\n", eth->bitcnt, eth->sndbuf);
 	}
 }
 
-static void
-check_packet(sim_t *sp, ether_t *eth, uint32_t *exp_data, int exp_len, int *seq)
+static int
+get_packet(sim_t *sp, ether_t *eth, uint32_t *ret_data, int ret_max)
 {
 	Vconan *tb = sp->tb;
 	int i;
@@ -2472,9 +2472,10 @@ check_packet(sim_t *sp, ether_t *eth, uint32_t *exp_data, int exp_len, int *seq)
 		fail("bad src mac\n");
 	if ((ntohl(buf[5]) & 0xffff0000) != 0x51390000)
 		fail("ether type/fill %08x\n", ntohl(buf[5]));
+#if 0
 	if ((ntohl(buf[5]) & 0xfff) != *seq)
 		fail("seq %d != %d\n", ntohl(buf[5]) & 0xffff, *seq);
-	(*seq)++;
+#endif
 
 	/* calculate crc */
 	uint32_t crc = 0xffffffff;
@@ -2493,16 +2494,14 @@ check_packet(sim_t *sp, ether_t *eth, uint32_t *exp_data, int exp_len, int *seq)
 	if (recv_crc != crc)
 		fail("crc differ: recv %08x calc %08x\n", recv_crc, crc);
 
-	if (plen != 28 + (exp_len < 11 ? 11 : exp_len) * 4)
-		fail("bad packet length %d\n", plen);
-	for (i = 0; i < exp_len; ++i) {
-		if (ntohl(buf[6 + i]) != exp_data[i])
-			fail("bad packet contents at %d: is %x should %x\n",
-				i, ntohl(buf[6 + i]), exp_data[i]);
-	}
-	for (i = exp_len; i < 11; ++i)
-		if (buf[6 + i] != 0xffffffff)
-			fail("bad packet filler at %i\n", i);
+	int rlen = (plen - 28) / 4;
+	if (rlen > ret_max)
+		fail("packet does not fit into return buffer\n");
+
+	for (i = 0; i < rlen; ++i)
+		ret_data[i] = ntohl(buf[6 + i]);
+
+	return rlen;
 }
 
 static void
@@ -2514,7 +2513,7 @@ test_ether(sim_t *sp)
 	uint32_t rsp[100];
 	uint32_t buf[500];
 	ether_t eth = { 0 };
-	int seq = 0;
+	int len;
 
 	eth.mdio = &tb->pmod2_4;
 	eth.mdio_in = &tb->eth_mdio_in1;
@@ -2619,7 +2618,33 @@ test_ether(sim_t *sp)
 	uart_send_vlq(sp, 1, CMD_GET_VERSION);
 	wait_for_uart_vlq(sp, 4, rsp);
 
-	check_packet(sp, &eth, buf, 10, &seq);
+	len = get_packet(sp, &eth, buf, sizeof(buf) / sizeof(*buf));
+	uint8_t last_rx = 0;
+	uint8_t last_tx = 0;
+	for (i = 0; i < len; ++i) {
+		uint32_t d = buf[i];
+		uint8_t type = d >> 24;
+		if (type == 0x08 || type == 0x0a) {
+			printf("%s %02x at %04x\n", type == 0x08 ? "rx" : "tx",
+				(d >> 16) & 0xff, d & 0xffff);
+		} else if (type == 0x09 || type == 0x0b ) {
+			if (i + 1 == len)
+				fail("incomplete mcu packet\n");
+			++i;
+			printf("tx %02x at %012llx\n", (d >> 16) & 0xff,
+				((uint64_t)buf[i] << 16) + (d & 0xffff));
+		} else if (type == 0xff) {
+			/* filler */
+		} else {
+			fail("invalid type in eth packet\n");
+		}
+		if (type == 0x08 || type == 0x09)
+			last_rx = (d >> 16) & 0xff;
+		if (type == 0x0a || type == 0x0b)
+			last_tx = (d >> 16) & 0xff;
+	}
+	if (last_rx != 0x7e || last_tx != 0x7e)
+		fail("bad mcu data received\n");
 #if 0
 	/* wait for testframe */
 	delay(sp, 25000000);
