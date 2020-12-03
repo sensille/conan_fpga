@@ -251,6 +251,7 @@ always @(posedge clk) begin
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_ETHER_SET_STATE_1) begin
+		/* 0 == QUEUE, 1 == DISCARD, 2 == RUNNING */
 		enable_state[channel] <= arg_data;
 		cmd_done <= 1;
 		state <= PS_IDLE;

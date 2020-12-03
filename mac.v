@@ -77,9 +77,12 @@ end
 
 reg [1:0] enable = 0;
 reg [1:0] enable_sync_1 = 0;
-always @(posedge clk) begin
+reg [1:0] enable_sync_2 = 0;
+always @(posedge rx_clk) begin
 	enable_sync_1 <= enable_in;
-	enable <= enable_sync_1;
+	enable_sync_2 <= enable_sync_1;
+	if (enable_sync_2 == enable_sync_1)
+		enable <= enable_sync_2;
 end
 
 /*
@@ -107,20 +110,20 @@ localparam MS_BITS = $clog2(MS_MAX + 1);
 localparam MAX_PACKET		= 375;
 
 reg [3:0] len_wait = 0;
-reg [MAC_PACKET_BITS-1:0] data_len;
-reg [MAC_PACKET_BITS-1:0] next_len;
-reg [MAC_PACKET_BITS-1:0] discard_len;
+reg [MAC_PACKET_BITS-1:0] data_len = 0;
+reg [MAC_PACKET_BITS-1:0] next_len = 0;
+reg [MAC_PACKET_BITS-1:0] discard_len = 0;
 reg crc_data_ready;
 reg init_crc = 0;
 reg [31:0] next_data;
 reg next_eof = 0;
 reg tx_start = 0;
 reg [MS_BITS-1:0] state = MS_IDLE;
-reg [7:0] idle_wait;
+reg [7:0] idle_wait = 0;
 reg next_data_wanted = 0;
 reg [3:0] stuff_len;
 localparam PACKET_WAIT_TIME = HZ / PACKET_WAIT_FRAC;
-reg [$clog2(PACKET_WAIT_TIME) - 1:0] packet_wait;
+reg [$clog2(PACKET_WAIT_TIME) - 1:0] packet_wait = 0;
 reg [15:0] ether_seq = 0;
 always @(posedge rx_clk) begin
 	crc_data_ready <= 0;
@@ -304,6 +307,8 @@ end
 assign debug[0] = tx_state;
 assign debug[5:1] = state;
 assign debug[6] = daqo_len_ready;
-assign debug[15:7] = next_len;
+assign debug[6] = len_ready;
+assign debug[13:8] = next_len;
+assign debug[15:14] = enable;
 
 endmodule
