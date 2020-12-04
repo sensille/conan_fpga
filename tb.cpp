@@ -230,6 +230,7 @@ static void sd_tick(sim_t *sp);
 static void ether_tick(sim_t *sp);
 static void wait_for_uart_send(sim_t *sp);
 static void fail(const char *msg, ...);
+static int get_packet(sim_t *sp, ether_t *eth, uint32_t *ret_data, int ret_max);
 
 watch_t *
 watch_init(Vconan *tb)
@@ -1888,6 +1889,7 @@ test_dro(sim_t *sp)
 
 	tb->chain_out_out2 = 1;	/* clk */
 
+	watch_add(sp->wp, "u_dro.enabled", "enabled", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_dro.state", "state", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_dro.dr_state", "dr_state", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_dro.dclk", "dclk", NULL, FORM_DEC, WF_ALL);
@@ -1895,7 +1897,7 @@ test_dro(sim_t *sp)
 	watch_add(sp->wp, "chain_out_out2", "dclk_in", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "chain_out_out1", "ddo_in", NULL, FORM_DEC, WF_ALL);
 
-	uart_send_vlq_and_wait(sp, 3, CMD_CONFIG_DRO, 0, idle);
+	uart_send_vlq_and_wait(sp, 4, CMD_CONFIG_DRO, 0, idle, 0);
 
 	starttime = dro_send(sp, 0x000000, 24, idle);
 
@@ -1925,7 +1927,48 @@ test_dro(sim_t *sp)
 	if (rsp[4] != 24)
 		fail("dro data bad bits %x\n", rsp[4]);
 
-	uart_send_vlq_and_wait(sp, 3, CMD_CONFIG_DRO, 0, 0);
+	/* now send via daq */
+	uart_send_vlq_and_wait(sp, 4, CMD_CONFIG_DRO, 0, idle, 1);
+
+	uint32_t buf[500];
+	ether_t eth = { 0 };
+	eth.rx_clk = &tb->pmod2_2;
+	eth.tx_en = &tb->pmod2_1;
+	eth.tx0 = &tb->pmod1_4;
+	eth.tx1 = &tb->pmod1_3;
+	starttime = dro_send(sp, 0x674531, 24, idle);
+	int len = get_packet(sp, &eth, buf, sizeof(buf) / sizeof(*buf));
+	int got_it = 0;
+	for (i = 0; i < len; ++i) {
+		uint32_t d = buf[i];
+		uint8_t type = d >> 24;
+
+		printf("type %d\n", type);
+		switch (type) {
+		case 0x08:
+		case 0x0a:
+		case 0xff:
+			break;
+		case 0x09:
+		case 0x0b:
+			if (i + 1 == len)
+				fail("incomplete mcu packet\n");
+			++i;
+			break;
+		case 0x30:
+			printf("received dro packet\n");
+			i += 2;
+			got_it = 1;
+			break;
+		default:
+			fail("unknown daq packet type %d\n", type);
+			break;
+		}
+	}
+	if (!got_it)
+		fail("no dro packet in daq packet\n");
+		
+	uart_send_vlq_and_wait(sp, 4, CMD_CONFIG_DRO, 0, 0, 0);
 
 	watch_clear(sp->wp);
 }
@@ -2512,8 +2555,8 @@ test_ether(sim_t *sp)
 	int j;
 	uint32_t rsp[100];
 	uint32_t buf[500];
-	ether_t eth = { 0 };
 	int len;
+	ether_t eth = { 0 };
 
 	eth.mdio = &tb->pmod2_4;
 	eth.mdio_in = &tb->eth_mdio_in1;
@@ -2660,16 +2703,16 @@ test(sim_t *sp)
 
 	test_time(sp);	/* always needed as time sync */
 	test_version(sp);
+	test_ether(sp);
 #if 0
 	test_sd(sp);
 #endif
-#if 1
-	test_ether(sp);
+#if 0
 	test_pwm(sp);
 	test_tmcuart(sp);
 	test_gpio(sp);
-	test_dro(sp);
 #endif
+	test_dro(sp);
 	test_as5311(sp);
 #if 1
 	/* must be last, as it ends with a shutdown */

@@ -218,7 +218,7 @@ initial begin
 	cmdtab[CMD_UPDATE_DIGITAL_OUT] = { UNIT_GPIO, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_SHUTDOWN] = { UNIT_SYSTEM, ARGS_0, 1'b0, 1'b0 };
 	cmdtab[CMD_STEPPER_GET_NEXT] = { UNIT_STEPPER, ARGS_1, 1'b0, 1'b1 };
-	cmdtab[CMD_CONFIG_DRO] = { UNIT_DRO, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_CONFIG_DRO] = { UNIT_DRO, ARGS_3, 1'b0, 1'b0 };
 	cmdtab[CMD_CONFIG_AS5311] = { UNIT_AS5311, ARGS_5, 1'b0, 1'b0 };
 	cmdtab[CMD_SD_QUEUE] = { UNIT_SD, ARGS_2, 1'b1, 1'b0 };
 	cmdtab[CMD_CONFIG_ETHER] = { UNIT_ETHER, ARGS_4, 1'b0, 1'b0 };

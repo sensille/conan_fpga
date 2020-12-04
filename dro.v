@@ -239,7 +239,7 @@ always @(posedge clk) begin
 		else
 			invol_req <= 1;
 		state <= PS_WAIT_GRANT;
-	end else if (state == PS_WAIT_GRANT && invol_grant) begin
+	end else if (state == PS_WAIT_GRANT && (invol_grant || daq_grant)) begin
 		invol_req <= 0;
 		daq_req <= 0;
 		for (i = 0; i < NDRO; i = i + 1) begin
