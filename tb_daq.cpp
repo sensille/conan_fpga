@@ -55,6 +55,7 @@ typedef struct {
 } sim_t;
 
 static void fail(const char *msg, ...);
+static void signal_tick(sim_t *sp);
 
 watch_t *
 watch_init(Vtb_daq *tb)
@@ -380,6 +381,8 @@ step(sim_t *sp, uint64_t cycle)
 	int want_dump = 0;
 
 	sp->cycle = cycle;
+
+	signal_tick(sp);
 
 	/* watch output before test, so we might see failure reasons */
 	do_watch(sp->wp, cycle);
@@ -743,11 +746,206 @@ printf("sleep\n"); sleep(1000);
 }
 
 static void
+signal_tick(sim_t *sp)
+{
+	Vtb_daq *tb = sp->tb;
+
+	tb->sig_grant = tb->sig_req;
+}
+
+static uint32_t
+get_bits(int num, uint32_t *buf, int len, int *ix)
+{
+	uint32_t ret = 0;
+	int i;
+
+	if (*ix + num > len * 32)
+		fail("eop exceeded\n");
+
+	for (i = 0; i < num; ++i) {
+		ret <<= 1;
+		ret |= !!(buf[(*ix + i) / 32] & (1 << (31 - ((*ix + i) % 32))));
+	}
+	*ix += num;
+
+	return ret;
+}
+
+static void
+parse_sig(uint32_t *buf, int len)
+{
+	uint32_t d = buf[0];
+	int off = (d >> 16) & 0xff;
+	int l = (d >> 8) & 0xff;
+	int ix = 64; /* start after header */
+	uint32_t slot;
+	uint32_t sample;
+	uint32_t scnt;
+	uint32_t pipeline[6] = { 0 };
+	int i;
+
+	if ((d >> 24) != 0x40)
+		fail("bad packet header\n");
+	printf("off %d len %d\n", off, l);
+
+	while (1) {
+		slot = get_bits(3, buf, len, &ix);
+		if (slot == 0) {
+			sample = get_bits(18, buf, len, &ix);
+			printf("got direct %x\n", sample);
+			scnt = 1;
+			memmove(pipeline + 1, pipeline + 0, sizeof(*pipeline) * 6);
+			pipeline[0] = sample;
+		} else {
+			scnt = get_bits(1, buf, len, &ix);
+			if (scnt == 0) {
+				scnt = get_bits(4, buf, len, &ix);
+			} else {
+				scnt = get_bits(1, buf, len, &ix);
+				if (scnt == 0) {
+					scnt = get_bits(8, buf, len, &ix);
+				} else {
+					scnt = get_bits(1, buf, len, &ix);
+					if (scnt == 1)
+						fail("inval cnt encoding\n");
+					scnt = get_bits(12, buf, len, &ix);
+				}
+			}
+			printf("got slot %d cnt %d\n", slot, scnt);
+			for (i = 0; i < scnt; ++i) {
+				sample = pipeline[slot - 1];
+				memmove(pipeline + 1, pipeline + 0, sizeof(*pipeline) * (slot - 1));
+				pipeline[0] = sample;
+				printf("sample %x\n", sample);
+			}
+		}
+		
+	}
+}
+
+static void
+send_and_test_stimulus(sim_t *sp, uint32_t *buf, int len)
+{
+	Vtb_daq *tb = sp->tb;
+	int i;
+	int rlen = 0;
+	uint32_t result[10000];
+
+	for (i = 0; i < len + 50000; ++i) {
+		if (i < len)	/* + 50000 cycles to push everything out */
+			tb->signal = buf[i];
+		yield(sp);
+		if (tb->sig_valid) {
+			result[rlen++] = tb->sig_data;
+			printf("recv: %08x\n", tb->sig_data);
+		}
+	}
+	printf("have result len %d\n", rlen);
+	i = 0;
+	while (i < rlen) {
+		uint32_t d = result[i];
+		int off = (d >> 16) & 0xff;
+		int l = (d >> 8) & 0xff;
+		if ((d >> 24) != 0x40)
+			fail("bad type %d\n", d >> 24);
+		printf("recv: off %d len %d\n", off, l);
+		parse_sig(result + i, l + 2);
+		i += l + 2;
+	}
+	if (i != rlen)
+		fail("bad total len\n");
+}
+
+static void
+test_signal(sim_t *sp)
+{
+	Vtb_daq *tb = sp->tb;
+	int i;
+	uint32_t stimulus[10000];
+
+#if 0
+	watch_add(sp->wp, "u_signal.systime", "in", NULL, FORM_DEC, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_signal.signal", "in", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_signal.recv", "recv", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_signal.pipeline", "pipeline", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_signal.slot$", "slot", NULL, FORM_HEX, WF_ALL);
+#if 0
+	watch_add(sp->wp, "u_signal.slot_cnt$", "scnt", NULL, FORM_HEX, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_signal.push_len", "plen", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_signal.push_data", "pdata", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_signal.pbuf$", "pbuf", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_signal.pbuflen", "pblen", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_signal.stream_data$", "sd", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_signal.stream_data_valid", "sdv", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_signal.state", "state", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_signal.st_state", "st_state", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_signal.fifo_elemcnt", "elemcnt", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_signal.enabled", "ena", NULL, FORM_DEC, WF_ALL);
+#if 0
+	watch_add(sp->wp, "u_signal.st_timer", "timer", NULL, FORM_DEC, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_signal.st_len", "len", NULL, FORM_DEC, WF_ALL);
+
+	delay(sp, 10);
+
+	/* enable signal unit */
+	tb->s_cmd = 28; /* CONFIG_SIGNAL */
+	tb->s_cmd_ready = 1;
+	tb->s_arg_data = 1;
+	yield(sp);
+	tb->s_cmd_ready = 0;
+	tb->s_arg_data = 0xffffffff;
+	yield(sp);
+	if (!tb->s_cmd_done)
+		fail("signal did not acknowldge enable command\n");
+
+	uint32_t buf[] = {
+		0x00,
+		0x01,
+		0x01,
+		0x01,
+		0x01,
+		0x01,
+		0x01,
+		0x01,
+		0x01,
+		0x01,
+		0x02,
+		0x03,
+		0x04,
+		0x05,
+		0x06,
+		0x07,
+		0x08,
+		0x07,
+		0x08,
+		0x04,
+		0x07,
+		0x01,
+		0x02,
+		0x02,
+		0x01,
+	};
+
+	send_and_test_stimulus(sp, buf, sizeof(buf) / sizeof(*buf));
+
+#if 1
+printf("sleep\n"); sleep(1000);
+#endif
+	watch_clear(sp->wp);
+}
+
+static void
 test(sim_t *sp)
 {
 	delay(sp, 1);	/* pass back control after initialization */
 
+#if 0
 	test_daq(sp);
+#endif
+	test_signal(sp);
 
 	printf("test succeeded after %d cycles\n", sp->cycle);
 
@@ -778,6 +976,7 @@ main(int argc, char **argv) {
 	// Tick the clock until we are done
 	while(!Verilated::gotFinish()) {
 		tb->clk = 1;
+		tb->systime = cycle;
 		tb->eval();
 		tb->clk = 0;
 		tb->eval();

@@ -38,6 +38,7 @@ static int color_disabled = 1;
 #define CMD_ETHER_MD_READ	25
 #define CMD_ETHER_MD_WRITE	26
 #define CMD_ETHER_SET_STATE	27
+#define CMD_CONFIG_SIGNAL	28
 
 #define RSP_GET_VERSION		0
 #define RSP_GET_TIME		1
@@ -1974,6 +1975,96 @@ test_dro(sim_t *sp)
 }
 
 static void
+test_signal(sim_t *sp)
+{
+	Vconan *tb = sp->tb;
+	int i;
+	uint32_t rsp[5];
+	uint32_t buf[500];
+
+#if 0
+	watch_add(sp->wp, "u_signal.systime", "in", NULL, FORM_DEC, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_signal.signal", "in", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_signal.recv", "recv", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_signal.pipeline", "pipeline", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_signal.slot$", "slot", NULL, FORM_HEX, WF_ALL);
+#if 0
+	watch_add(sp->wp, "u_signal.slot_cnt$", "scnt", NULL, FORM_DEC, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_signal.push_len", "plen", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_signal.push_data", "pdata", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_signal.stream_data$", "sd", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_signal.stream_data_valid", "sdv", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_signal.state", "state", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_signal.st_state", "st_state", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_signal.fifo_elemcnt", "elemcnt", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_signal.enabled", "ena", NULL, FORM_DEC, WF_ALL);
+#if 0
+	watch_add(sp->wp, "u_signal.st_timer", "timer", NULL, FORM_DEC, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_signal.st_len", "len", NULL, FORM_DEC, WF_ALL);
+
+	/* drain existing packets */
+	uart_send_vlq_and_wait(sp, 3, CMD_ETHER_SET_STATE, 0, 1);
+	delay(sp, 20000);
+
+	uart_send_vlq_and_wait(sp, 3, CMD_ETHER_SET_STATE, 0, 2); /* set running */
+
+	/* enable signal unit */
+	uart_send_vlq_and_wait(sp, 3, CMD_CONFIG_SIGNAL, 1, 0xffffffff);
+
+	ether_t eth = { 0 };
+	eth.rx_clk = &tb->pmod2_2;
+	eth.tx_en = &tb->pmod2_1;
+	eth.tx0 = &tb->pmod1_4;
+	eth.tx1 = &tb->pmod1_3;
+
+	int len = get_packet(sp, &eth, buf, sizeof(buf) / sizeof(*buf));
+	int got_it = 0;
+	for (i = 0; i < len; ++i) {
+		uint32_t d = buf[i];
+		uint8_t type = d >> 24;
+
+		printf("type %d\n", type);
+		switch (type) {
+		case 0x08:
+		case 0x0a:
+		case 0xff:
+			break;
+		case 0x09:
+		case 0x0b:
+			if (i + 1 == len)
+				fail("incomplete mcu packet\n");
+			++i;
+			break;
+		case 0x30:
+			i += 2;
+			got_it = 1;
+			break;
+		case 0x40:
+			printf("received signal packet len %d\n", (d >> 8) & 0xff);
+			i += 1 + (d >> 8) & 0xff;
+			got_it = 1;
+			break;
+		default:
+			fail("unknown daq packet type %d\n", type);
+			break;
+		}
+	}
+	if (!got_it)
+		fail("no dro packet in daq packet\n");
+
+#if 0
+printf("sleeping\n"); sleep(1000);
+#endif
+
+	uart_send_vlq_and_wait(sp, 3, CMD_ETHER_SET_STATE, 0, 1);
+
+	watch_clear(sp->wp);
+}
+
+static void
 as5311_tick(sim_t *sp)
 {
 	int i;
@@ -2486,7 +2577,7 @@ get_packet(sim_t *sp, ether_t *eth, uint32_t *ret_data, int ret_max)
 		fail("packet too long\n");
 	plen = i;
 
-	printf("PACKET: ");
+	printf("PACKET (%d): ", plen);
 	for (i = 0; i < plen; ++i)
 		printf("%02x ", p[i]);
 	printf("\n");
@@ -2712,6 +2803,7 @@ test(sim_t *sp)
 	test_tmcuart(sp);
 	test_gpio(sp);
 #endif
+	test_signal(sp);
 	test_dro(sp);
 	test_as5311(sp);
 #if 1

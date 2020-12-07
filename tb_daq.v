@@ -18,9 +18,28 @@ module tb_daq #(
 	input wire [NDAQ-1:0] daq_req,
 	output wire [NDAQ-1:0] daq_grant,
 
-	input wire [1:0] enable
+	input wire [1:0] enable,
+
+	output wire [31:0] sig_data,
+	output reg sig_end,
+	output reg sig_valid = 0,
+	output reg sig_req = 0,
+	input wire sig_grant,
+
+	input wire [31:0] s_arg_data,
+	output wire s_arg_advance,
+	input wire [CMD_BITS-1:0] s_cmd,
+	input wire s_cmd_ready,
+	output wire s_cmd_done,
+	output wire [32:0] s_param_data,
+	output wire s_param_write,
+	output wire s_invol_req,
+	input wire s_invol_grant,
+
+	input [SIG_WIDTH-1:0] signal
 );
 
+localparam CMD_BITS = 8;
 localparam MAC_PACKET_BITS = 9; /* 2^9 * 4 bytes > 1500 */
 localparam HZ = 48000000;
 
@@ -86,6 +105,44 @@ mac #(
 	.enable_in(enable),
 
 	.debug()
+);
+
+localparam SIG_WIDTH	= 18;
+
+reg [31:0] s_daq_data;
+reg s_daq_end;
+reg s_daq_valid = 0;
+reg s_daq_req = 0;
+wire s_daq_grant;
+
+signal #(
+	.HZ(HZ),
+	.SIG_WIDTH(SIG_WIDTH),
+	.CMD_BITS(CMD_BITS),
+	.CMD_CONFIG_SIGNAL(28),
+	.SIG_WAIT_FRAC(1000),
+	.RLE_BITS(12)
+) u_signal (
+	.clk(clk),
+	.systime(systime),
+
+	.daq_data(sig_data),
+	.daq_end(sig_end),
+	.daq_valid(sig_valid),
+	.daq_req(sig_req),
+	.daq_grant(sig_grant),
+
+	.arg_data(s_arg_data),
+	.arg_advance(s_arg_advance),
+	.cmd(s_cmd),
+	.cmd_ready(s_cmd_ready),
+	.cmd_done(s_cmd_done),
+	.param_data(s_param_data),
+	.param_write(s_param_write),
+	.invol_req(s_invol_req),
+	.invol_grant(s_invol_grant),
+
+	.signal(signal)
 );
 
 endmodule

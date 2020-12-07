@@ -16,7 +16,9 @@ module conan #(
 	parameter NSD = 1,
 	parameter NETHER = 1,
 	parameter VERSION = 66,
-	parameter PACKET_WAIT_FRAC = 10
+	parameter PACKET_WAIT_FRAC = 10,
+	parameter SIG_WAIT_FRAC = 10,
+	parameter RLE_BITS = 20
 ) (
 	input wire clk_50mhz,
 	input wire clk_48mhz,
@@ -194,6 +196,32 @@ module conan #(
 	input wire fpga5,
 	input wire fpga6
 );
+
+/*
+ * sniffing
+ */
+localparam SIG_WIDTH	= 12 + 8;
+wire [SIG_WIDTH-1:0] signal;
+assign signal[0] = step1;
+assign signal[1] = dir1;
+assign signal[2] = step2;
+assign signal[3] = dir2;
+assign signal[4] = step3;
+assign signal[5] = dir3;
+assign signal[6] = step4;
+assign signal[7] = dir4;
+assign signal[8] = step5;
+assign signal[9] = dir5;
+assign signal[10] = step6;
+assign signal[11] = dir6;
+assign signal[12] = endstop1; /* stepper_x */
+assign signal[13] = endstop2; /* stepper_y */
+assign signal[14] = endstop3; /* stepper_z */
+assign signal[15] = endstop4; /* bltouch */
+assign signal[16] = pwm1; /* heater_extruder */
+assign signal[17] = pwm3; /* heater_bed */
+assign signal[18] = pwm11; /* bltouch */
+assign signal[19] = pwm5; /* part cooling fan */
 
 /*
  * PLL
@@ -424,10 +452,13 @@ command #(
 	.NSD(NSD),
 	.NETHER(NETHER),
 	.VERSION(VERSION),
-	.PACKET_WAIT_FRAC(PACKET_WAIT_FRAC)
+	.PACKET_WAIT_FRAC(PACKET_WAIT_FRAC),
+	.SIG_WIDTH(SIG_WIDTH),
+	.SIG_WAIT_FRAC(SIG_WAIT_FRAC),
+	.RLE_BITS(RLE_BITS)
 ) u_command (
 	.clk(clk),
-	.systime(systime[31:0]),
+	.systime(systime),
 
 	/*
 	 * receive side
@@ -504,6 +535,8 @@ command #(
 	.syst_daq_end(syst_daq_end),
 	.syst_daq_req(syst_daq_req),
 	.syst_daq_grant(syst_daq_grant),
+
+	.signal(signal),
 
 	.req_shutdown(req_shutdown),
 	.debug(cmd_debug),

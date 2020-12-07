@@ -7,7 +7,7 @@ VINC=/usr/local/share/verilator/include
 
 SRC = led7219.v pll.v uart.v framing.v fifo.v command.v pwm.v system.v \
        stepper.v stepdir.v tmcuart.v gpio.v dro.v as5311.v sd.v sdc.v \
-       mac.v ether.v daq.v uartlog.v $(TARGET).v
+       mac.v ether.v daq.v uartlog.v signal.v $(TARGET).v
 
 DAQ_SRC = mac.v ether.v daq.v tb_daq.v
 
@@ -29,7 +29,7 @@ v1: vrun_daq
 v2: vrun
 
 obj_dir/$(TARGET).mk: $(SRC) Makefile
-	verilator -GPACKET_WAIT_FRAC=100 --public -Wall -CFLAGS -g --exe --cc $(TARGET).v verilator.vlt tb.cpp
+	verilator -GPACKET_WAIT_FRAC=100 -GSIG_WAIT_FRAC=1000 -GRLE_BITS=12 --public -Wall -CFLAGS -g --exe --cc $(TARGET).v verilator.vlt tb.cpp
 
 obj_dir/V$(TARGET)__ALL.a: obj_dir/$(TARGET).mk
 	make -j 4 -C obj_dir -f V$(TARGET).mk V$(TARGET)__ALL.a

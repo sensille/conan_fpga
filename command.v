@@ -16,7 +16,10 @@ module command #(
 	parameter NSD = 0,
 	parameter NETHER = 0,
 	parameter VERSION = 0,
-	parameter PACKET_WAIT_FRAC = 0
+	parameter PACKET_WAIT_FRAC = 0,
+	parameter SIG_WIDTH = 0,
+	parameter SIG_WAIT_FRAC = 0,
+	parameter RLE_BITS = 0
 ) (
 	input wire clk,
 
@@ -40,7 +43,7 @@ module command #(
 	input wire send_ring_full,
 
 	/* global time */
-	input wire [31:0] systime,
+	input wire [63:0] systime,
 
 	/*
 	 * I/O
@@ -102,6 +105,8 @@ module command #(
 	input wire syst_daq_req,
 	output wire syst_daq_grant,
 
+	input wire [SIG_WIDTH-1:0] signal,
+
 	/*
 	 * debug
 	 */
@@ -130,7 +135,8 @@ localparam UNIT_DRO		= 4'd5;
 localparam UNIT_AS5311		= 4'd6;
 localparam UNIT_SD		= 4'd7;
 localparam UNIT_ETHER		= 4'd8;
-localparam NUNITS		= 4'd9;
+localparam UNIT_SIGNAL		= 4'd9;
+localparam NUNITS		= 4'd10;
 
 localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 2;
 localparam CMD_GET_VERSION		= 0;
@@ -161,7 +167,8 @@ localparam CMD_CONFIG_ETHER		= 24;
 localparam CMD_ETHER_MD_READ		= 25;
 localparam CMD_ETHER_MD_WRITE		= 26;
 localparam CMD_ETHER_SET_STATE		= 27;
-localparam NCMDS			= 28;
+localparam CMD_CONFIG_SIGNAL		= 28;
+localparam NCMDS			= 29;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
@@ -225,6 +232,7 @@ initial begin
 	cmdtab[CMD_ETHER_MD_READ] = { UNIT_ETHER, ARGS_3, 1'b0, 1'b1 };
 	cmdtab[CMD_ETHER_MD_WRITE] = { UNIT_ETHER, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_ETHER_SET_STATE] = { UNIT_ETHER, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_CONFIG_SIGNAL] = { UNIT_SIGNAL, ARGS_2, 1'b0, 1'b0 };
 end
 
 /*
@@ -234,7 +242,8 @@ localparam DAQ_MCU	= 0;
 localparam DAQ_SYSTIME	= 1;
 localparam DAQ_AS5311	= 2;
 localparam DAQ_DRO	= 3;
-localparam NDAQ		= 4;
+localparam DAQ_SIGNAL	= 4;
+localparam NDAQ		= 5;
 wire [31:0] daq_data[NDAQ];
 wire [NDAQ-1:0] daq_valid;
 wire [NDAQ-1:0] daq_end;
@@ -276,7 +285,7 @@ pwm #(
 	.CMD_SCHEDULE_PWM(CMD_SCHEDULE_PWM)
 ) u_pwm (
 	.clk(clk),
-	.systime(systime),
+	.systime(systime[31:0]),
 
 	.arg_data(unit_arg_data),
 	.arg_advance(unit_arg_advance[UNIT_PWM]),
@@ -321,7 +330,7 @@ system #(
 	.CMD_BITS(CMD_BITS)
 ) u_system (
 	.clk(clk),
-	.systime(systime),
+	.systime(systime[31:0]),
 
 	.arg_data(unit_arg_data),
 	.arg_advance(unit_arg_advance[UNIT_SYSTEM]),
@@ -366,7 +375,7 @@ stepper #(
 	.RSP_STEPPER_GET_NEXT(RSP_STEPPER_GET_NEXT)
 ) u_stepper (
 	.clk(clk),
-	.systime(systime),
+	.systime(systime[31:0]),
 
 	.arg_data(unit_arg_data),
 	.arg_advance(unit_arg_advance[UNIT_STEPPER]),
@@ -403,7 +412,7 @@ tmcuart #(
 	.CMD_BITS(CMD_BITS)
 ) u_tmcuart (
 	.clk(clk),
-	.systime(systime),
+	.systime(systime[31:0]),
 
 	.arg_data(unit_arg_data),
 	.arg_advance(unit_arg_advance[UNIT_TMCUART]),
@@ -433,7 +442,7 @@ gpio #(
 	.CMD_BITS(CMD_BITS)
 ) u_gpio (
 	.clk(clk),
-	.systime(systime),
+	.systime(systime[31:0]),
 
 	.arg_data(unit_arg_data),
 	.arg_advance(unit_arg_advance[UNIT_GPIO]),
@@ -463,7 +472,7 @@ dro #(
 	.CMD_BITS(CMD_BITS)
 ) u_dro (
 	.clk(clk),
-	.systime(systime),
+	.systime(systime[31:0]),
 
 	.arg_data(unit_arg_data),
 	.arg_advance(unit_arg_advance[UNIT_DRO]),
@@ -502,7 +511,7 @@ as5311 #(
 	.DAQT_AS5311_MAG(DAQT_AS5311_MAG)
 ) u_as5311 (
 	.clk(clk),
-	.systime(systime),
+	.systime(systime[31:0]),
 
 	.arg_data(unit_arg_data),
 	.arg_advance(unit_arg_advance[UNIT_AS5311]),
@@ -541,7 +550,7 @@ sd #(
 	.CMD_BITS(CMD_BITS)
 ) u_sd (
 	.clk(clk),
-	.systime(systime),
+	.systime(systime[31:0]),
 
 	.arg_data(unit_arg_data),
 	.arg_advance(unit_arg_advance[UNIT_SD]),
@@ -593,7 +602,7 @@ daq #(
 	.MAC_PACKET_BITS(MAC_PACKET_BITS)
 ) u_daq (
 	.clk(clk),
-	.systime(systime),
+	.systime(systime[31:0]),
 
 	.daq_data_in(_daq_data),
 	.daq_end(daq_end),
@@ -623,7 +632,7 @@ ether #(
 	.PACKET_WAIT_FRAC(PACKET_WAIT_FRAC)
 ) u_ether (
 	.clk(clk),
-	.systime(systime),
+	.systime(systime[31:0]),
 
 	.arg_data(unit_arg_data),
 	.arg_advance(unit_arg_advance[UNIT_ETHER]),
@@ -655,6 +664,36 @@ ether #(
 	.debug(ether_debug),
 
 	.shutdown(shutdown)
+);
+
+signal #(
+	.HZ(HZ),
+	.SIG_WIDTH(SIG_WIDTH),
+	.CMD_CONFIG_SIGNAL(CMD_CONFIG_SIGNAL),
+	.CMD_BITS(CMD_BITS),
+	.SIG_WAIT_FRAC(SIG_WAIT_FRAC),
+	.RLE_BITS(RLE_BITS)
+) u_signal (
+	.clk(clk),
+	.systime(systime),
+
+	.arg_data(unit_arg_data),
+	.arg_advance(unit_arg_advance[UNIT_SIGNAL]),
+	.cmd(unit_cmd),
+	.cmd_ready(unit_cmd_ready[UNIT_SIGNAL]),
+	.cmd_done(unit_cmd_done[UNIT_SIGNAL]),
+	.param_data(unit_param_data[UNIT_SIGNAL]),
+	.param_write(unit_param_write[UNIT_SIGNAL]),
+	.invol_req(unit_invol_req[UNIT_SIGNAL]),
+	.invol_grant(unit_invol_grant[UNIT_SIGNAL]),
+
+	.daq_data(daq_data[DAQ_SIGNAL]),
+	.daq_valid(daq_valid[DAQ_SIGNAL]),
+	.daq_end(daq_end[DAQ_SIGNAL]),
+	.daq_req(daq_req[DAQ_SIGNAL]),
+	.daq_grant(daq_grant[DAQ_SIGNAL]),
+
+	.signal(signal)
 );
 
 localparam MST_IDLE = 0;
