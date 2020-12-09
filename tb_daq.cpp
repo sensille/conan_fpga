@@ -11,6 +11,10 @@
 
 static int color_disabled = 0;
 
+#ifndef min
+#define min(a,b) ((a) < (b) ? (a) : (b))
+#endif
+
 #define HZ 48000000
 
 #define WF_WATCH	1
@@ -753,62 +757,166 @@ signal_tick(sim_t *sp)
 	tb->sig_grant = tb->sig_req;
 }
 
-static uint32_t
-get_bits(int num, uint32_t *buf, int len, int *ix)
+#define PST_SOP 0
+#define PST_IN_PACKET 1
+typedef struct _parser {
+	uint32_t	*buf;
+	int		len;	/* length of buffer */
+	int		ptr;	/* current pointer into buffer */
+	int		ix;	/* bit index in current word */
+	int		state;	/* parser state */
+	int		p_end;	/* end of current packet (excl.) */
+	int		rle_len;/* bit width of rle counter */
+	uint32_t	recv_systime; /* systime at start of packet */
+	int		resid_len;	/* residual from prev packet */
+	uint32_t	resid;
+	int		not_first_packet;
+	int		eos;	/* end of stream */
+	uint32_t	systime;
+	int		recv_off;
+	int		check_off;
+} parser_t;
+
+/*
+ * can return a partial result. call as often as necessary
+ */
+static int
+_get_bits(parser_t *p, int num, uint32_t *res)
 {
 	uint32_t ret = 0;
 	int i;
 
-	if (*ix + num > len * 32)
-		fail("eop exceeded\n");
+	if (p->eos)
+		fail("data requested at end of stream\n");
 
-	for (i = 0; i < num; ++i) {
-		ret <<= 1;
-		ret |= !!(buf[(*ix + i) / 32] & (1 << (31 - ((*ix + i) % 32))));
+	if (p->state == PST_SOP) {
+		uint32_t h1;
+		uint32_t h2;
+		int off;
+
+		/* read start of packet */
+		if (p->ptr + 2 > p->len)
+			fail("not a full header in stream\n");
+		h1 = p->buf[p->ptr++];
+		h2 = p->buf[p->ptr++];
+		if ((h1 >> 24) != 0x40)
+			fail("not a signal packet (0x%02x)\n", h1 >> 24);
+		off = (h1 >> 16) & 0xff;
+		p->p_end = p->ptr + ((h1 >> 8) & 0xff);
+		if (p->not_first_packet && (h1 & 0xff) != p->rle_len)
+			fail("rle len changed\n");
+		p->rle_len = h1 & 0xff;
+		p->recv_systime = h2;
+		p->recv_off = off;
+		p->check_off = 1;
+		if (!p->not_first_packet) {
+			if (off != 0)
+				fail("offset in first packet\n");
+		}
+		p->not_first_packet = 1;
+		printf("SOP: off %d ptr %d end %d rle_len %d systime %d\n", off,
+			p->ptr, p->p_end, p->rle_len, p->recv_systime);
+		p->state = PST_IN_PACKET;
+		*res = 0;
+		return 0;
 	}
-	*ix += num;
+	if (p->state == PST_IN_PACKET) {
+		int n = min(32 - p->ix, num);
 
-	return ret;
+		*res = (p->buf[p->ptr] >> (32 - p->ix - n));
+		*res &= (1 << n) - 1;
+		p->ix += n;
+
+		if (p->ix == 32) {
+			++p->ptr;
+			p->ix = 0;
+			if (p->ptr == p->p_end)
+				p->state = PST_SOP;
+			if (p->ptr == p->len)
+				p->eos = 1;
+		}
+		printf("new ix %d ptr %d res %x rlen %d\n", p->ix, p->ptr, *res, n);
+		return n;
+	}
+}
+
+static uint32_t
+get_bits(parser_t *p, int num)
+{
+	uint32_t r;
+	uint32_t res = 0;
+	int n;
+
+	while (num > 0) {
+		n = _get_bits(p, num, &r);
+		res <<= n;
+		res |= r;
+		num -= n;
+	};
+
+	return res;
 }
 
 static void
-parse_sig(uint32_t *buf, int len)
+check_offset(parser_t *p)
 {
-	uint32_t d = buf[0];
-	int off = (d >> 16) & 0xff;
-	int l = (d >> 8) & 0xff;
-	int ix = 64; /* start after header */
+	uint32_t r;
+
+	/*
+	 * at start of packet, push header through to get current values
+	 * for the check below
+	 */
+	if (p->state == PST_SOP)
+		_get_bits(p, 0, &r);
+
+	if (!p->check_off)
+		return;
+
+	p->check_off = 0;
+
+	if (p->systime != p->recv_systime || p->ix != p->recv_off) {
+		printf("own systime %d recv %d diff %d off %d recv %d\n",
+			p->systime, p->recv_systime, p->systime - p->recv_systime,
+			p->ix, p->recv_off);
+		fail("bad systime/ix in header\n");
+	}
+}
+
+static void
+expand_sig(parser_t *p, uint32_t *out, int outmax)
+{
+	int outlen = 0;
 	uint32_t slot;
 	uint32_t sample;
 	uint32_t scnt;
 	uint32_t pipeline[6] = { 0 };
 	int i;
 
-	if ((d >> 24) != 0x40)
-		fail("bad packet header\n");
-	printf("off %d len %d\n", off, l);
-
 	while (1) {
-		slot = get_bits(3, buf, len, &ix);
+		check_offset(p);
+		slot = get_bits(p, 3);
 		if (slot == 0) {
-			sample = get_bits(18, buf, len, &ix);
+			sample = get_bits(p, 18);
 			printf("got direct %x\n", sample);
+			out[outlen++] = sample;
+			if (outlen == outmax)
+				return;
 			scnt = 1;
 			memmove(pipeline + 1, pipeline + 0, sizeof(*pipeline) * 6);
 			pipeline[0] = sample;
 		} else {
-			scnt = get_bits(1, buf, len, &ix);
+			scnt = get_bits(p, 1);
 			if (scnt == 0) {
-				scnt = get_bits(4, buf, len, &ix);
+				scnt = get_bits(p, 4);
 			} else {
-				scnt = get_bits(1, buf, len, &ix);
+				scnt = get_bits(p, 1);
 				if (scnt == 0) {
-					scnt = get_bits(8, buf, len, &ix);
+					scnt = get_bits(p, 8);
 				} else {
-					scnt = get_bits(1, buf, len, &ix);
+					scnt = get_bits(p, 1);
 					if (scnt == 1)
 						fail("inval cnt encoding\n");
-					scnt = get_bits(12, buf, len, &ix);
+					scnt = get_bits(p, 12);
 				}
 			}
 			printf("got slot %d cnt %d\n", slot, scnt);
@@ -816,10 +924,15 @@ parse_sig(uint32_t *buf, int len)
 				sample = pipeline[slot - 1];
 				memmove(pipeline + 1, pipeline + 0, sizeof(*pipeline) * (slot - 1));
 				pipeline[0] = sample;
+#if 1
 				printf("sample %x\n", sample);
+#endif
+				out[outlen++] = sample;
+				if (outlen == outmax)
+					return;
 			}
 		}
-		
+		p->systime += scnt;
 	}
 }
 
@@ -829,7 +942,8 @@ send_and_test_stimulus(sim_t *sp, uint32_t *buf, int len)
 	Vtb_daq *tb = sp->tb;
 	int i;
 	int rlen = 0;
-	uint32_t result[10000];
+	uint32_t *result = (uint32_t *)malloc(sizeof(*result) * (len * 2 + 1000));
+	uint32_t systime = sp->cycle - 1;
 
 	for (i = 0; i < len + 50000; ++i) {
 		if (i < len)	/* + 50000 cycles to push everything out */
@@ -841,19 +955,28 @@ send_and_test_stimulus(sim_t *sp, uint32_t *buf, int len)
 		}
 	}
 	printf("have result len %d\n", rlen);
-	i = 0;
-	while (i < rlen) {
-		uint32_t d = result[i];
-		int off = (d >> 16) & 0xff;
-		int l = (d >> 8) & 0xff;
-		if ((d >> 24) != 0x40)
-			fail("bad type %d\n", d >> 24);
-		printf("recv: off %d len %d\n", off, l);
-		parse_sig(result + i, l + 2);
-		i += l + 2;
-	}
-	if (i != rlen)
-		fail("bad total len\n");
+
+	parser_t p = { 0 };
+	p.buf = result;
+	p.len = rlen;
+	p.systime = systime;
+
+	int outlen = len + 3;
+	uint32_t *out = (uint32_t *)malloc(sizeof(*out) * outlen);
+	expand_sig(&p, out, outlen);
+
+	printf("expanded to %d samples\n", outlen);
+
+	/* discard first 3 0-word, sig inserts it at the start */
+	if (out[0] != 0 || out[1] != 0 || out[2] != 0)
+		fail("expected 3x 0 at start of stream\n");
+
+	for (i = 0; i < len; ++i)
+		if (out[i + 3] != buf[i])
+			fail("received data differ at %d\n", i);
+
+	free(out);
+	free(result);
 }
 
 static void
@@ -861,7 +984,6 @@ test_signal(sim_t *sp)
 {
 	Vtb_daq *tb = sp->tb;
 	int i;
-	uint32_t stimulus[10000];
 
 #if 0
 	watch_add(sp->wp, "u_signal.systime", "in", NULL, FORM_DEC, WF_ALL);
@@ -901,6 +1023,8 @@ test_signal(sim_t *sp)
 	if (!tb->s_cmd_done)
 		fail("signal did not acknowldge enable command\n");
 
+#if 0
+	/* test short stimulus with timeout */
 	uint32_t buf[] = {
 		0x00,
 		0x01,
@@ -930,6 +1054,46 @@ test_signal(sim_t *sp)
 	};
 
 	send_and_test_stimulus(sp, buf, sizeof(buf) / sizeof(*buf));
+#endif
+
+	/* large stimulus with back-to-back packets, timeout for last packet */
+	int stimulus_size = 100000;
+	uint32_t *stimulus = (uint32_t *)malloc(sizeof(*stimulus) * stimulus_size);
+	int j;
+	uint32_t prev = 0;
+	uint32_t priv[7] = { 0x1234, 0x4321, 0x1111, 0x9a9a, 0x5b5b, 0xbcde, 0x0000 };
+	srand(0);
+	for (i = 0; i < stimulus_size; ++i) {
+		int which = rand() % 100;
+
+		if (which < 80) {
+			stimulus[i] = prev;
+		} else if (which < 90) {
+			stimulus[i] = priv[rand() % 7];
+		} else if (which < 95) {
+			stimulus[i] = rand() & 0xffff;
+		} else if (which < 98) {
+			uint32_t v = rand() & 0xffff;
+			for (j = 0; j < rand() % 256; ++j) {
+				if (i == stimulus_size)
+					break;
+				stimulus[i++] = v;
+			}
+			--i;
+		} else {
+			uint32_t v = rand() & 0xffff;
+			for (j = 0; j < rand() % 2000; ++j) {
+				if (i == stimulus_size)
+					break;
+				stimulus[i++] = v;
+			}
+			--i;
+		}
+		if (which > 96)
+			priv[rand() % 7] = rand() & 0xffff;
+		prev = stimulus[i];
+	}
+	send_and_test_stimulus(sp, stimulus, stimulus_size);
 
 #if 1
 printf("sleep\n"); sleep(1000);

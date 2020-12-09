@@ -153,7 +153,7 @@ always @(posedge clk) begin
 			push_len <= SLOT_BITS + 5;
 			push_data <= { prev_slot, 1'b0, slot_cnt[3:0] };
 		end else if (slot_cnt[RLE_BITS-1:8] == 0) begin
-			push_len <= SLOT_BITS + 9;
+			push_len <= SLOT_BITS + 10;
 			push_data <= { prev_slot, 2'b10, slot_cnt[7:0] };
 		end else begin
 			push_len <= SLOT_BITS + 3 + RLE_BITS;
@@ -182,12 +182,13 @@ always @(posedge clk) begin
 			push_len <= SLOT_BITS + 5;
 			push_data <= { prev_slot, 1'b0, slot_cnt[3:0] };
 		end else if (slot_cnt[RLE_BITS-1:8] == 0) begin
-			push_len <= SLOT_BITS + 9;
+			push_len <= SLOT_BITS + 10;
 			push_data <= { prev_slot, 2'b10, slot_cnt[7:0] };
 		end else begin
 			push_len <= SLOT_BITS + 3 + RLE_BITS;
 			push_data <= { prev_slot, 3'b110, slot_cnt };
 		end
+		push_clks <= slot_cnt;
 		slot_cnt <= 1;
 	end
 	prev_slot <= slot;
@@ -199,19 +200,27 @@ end
  */
 reg [31:0] pbuf = 0;
 reg [4:0] pbuflen = 0;
-reg [(32 + 5 + RLE_BITS) - 1:0] stream_data;
+reg [(32 + 5 + RLE_BITS + 1) - 1:0] stream_data;
 reg stream_data_valid = 0;
 reg [4:0] next_mark = 0;
+/*
+ * assuming no 2 packets with full RLE bits encoding
+ * fit into 32 bits, we only need room for one full
+ * RLE count and a few
+ */
+reg [RLE_BITS + 1:0] stream_clks = 0;
 always @(posedge clk) begin
 	stream_data_valid <= 0;
 	if (push_len) begin
+		stream_clks <= stream_clks + push_clks;
 		if (pbuflen + push_len >= 32) begin
 			pbuflen <= pbuflen + push_len - 32;
 			next_mark <= pbuflen + push_len - 32;
 			stream_data[31:0] <= (pbuf << (32 - pbuflen)) | (push_data >> (push_len - (32 - pbuflen)));
 			stream_data[36:32] <= next_mark; /* position mark */
-			stream_data[32 + 5 + RLE_BITS - 1:37] <= push_clks;
 			stream_data_valid <= 1;
+			stream_data[37 + RLE_BITS:37] <= stream_clks + push_clks;
+			stream_clks <= 0;
 		end else begin
 			pbuflen <= pbuflen + push_len;
 		end
@@ -222,11 +231,11 @@ end
 /*
  * fifo to output
  */
-wire [(32 + 5 + RLE_BITS) - 1:0] fifo_out;
+wire [(32 + 5 + RLE_BITS):0] fifo_out;
 reg fifo_out_rd_en = 0;
 wire [7:0] fifo_elemcnt;
 fifo #(
-	.DATA_WIDTH(32 + 5 + RLE_BITS),
+	.DATA_WIDTH(32 + 5 + RLE_BITS + 1),
 	.ADDR_WIDTH(8)
 ) u_fifo (
 	.clk(clk),
@@ -249,8 +258,8 @@ fifo #(
 localparam DAQ_TIMEOUT	= HZ/SIG_WAIT_FRAC;
 localparam TIMEOUT_BITS = $clog2(DAQ_TIMEOUT);
 reg [TIMEOUT_BITS-1:0] st_timer = 0;
-reg [47:0] recovered_systime = 0;
-reg [47:0] latched_systime;
+reg [31:0] recovered_systime = 0;
+reg [31:0] latched_systime;
 
 localparam ST_IDLE	= 0;
 localparam ST_WAIT_GRANT= 1;
@@ -291,7 +300,7 @@ always @(posedge clk) begin
 		daq_data[31:24] <= DAQT_SIGNAL_DATA;
 		daq_data[23:16] <= fifo_out[36:32];
 		daq_data[15:8] <= st_len;
-		daq_data[7:0] <= latched_systime[47:32];
+		daq_data[7:0] <= SIG_WIDTH;
 		daq_valid <= 1;
 		fifo_out_rd_en <= 1; /* delayed, request two slots in advance */
 		st_state <= ST_HEADER_2;
@@ -312,8 +321,8 @@ always @(posedge clk) begin
 			st_len <= st_len - 1;
 			if (st_len > 2)
 				fifo_out_rd_en <= 1;
+			recovered_systime <= recovered_systime + fifo_out[37 + RLE_BITS - 1:37];
 		end
-		recovered_systime <= recovered_systime + fifo_out[32 + 5 + RLE_BITS - 1:48];
 	end
 end
 
