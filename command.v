@@ -19,7 +19,8 @@ module command #(
 	parameter PACKET_WAIT_FRAC = 0,
 	parameter SIG_WIDTH = 0,
 	parameter SIG_WAIT_FRAC = 0,
-	parameter RLE_BITS = 0
+	parameter RLE_BITS = 0,
+	parameter FLUSH_FREQ = 0
 ) (
 	input wire clk,
 
@@ -597,6 +598,7 @@ generate
 		assign _daq_data[((gi+1) * 32)-1:(gi * 32)] = daq_data[gi];
 endgenerate
 
+wire [15:0] daq_debug;
 daq #(
 	.NDAQ(NDAQ),
 	.MAC_PACKET_BITS(MAC_PACKET_BITS)
@@ -614,7 +616,9 @@ daq #(
 	.daqo_data_rd_en(daqo_data_rd_en),
 	.daqo_len(daqo_len),
 	.daqo_len_ready(daqo_len_ready),
-	.daqo_len_rd_en(daqo_len_rd_en)
+	.daqo_len_rd_en(daqo_len_rd_en),
+
+	.debug(daq_debug)
 );
 
 wire [15:0] ether_debug;
@@ -672,7 +676,8 @@ signal #(
 	.CMD_CONFIG_SIGNAL(CMD_CONFIG_SIGNAL),
 	.CMD_BITS(CMD_BITS),
 	.SIG_WAIT_FRAC(SIG_WAIT_FRAC),
-	.RLE_BITS(RLE_BITS)
+	.RLE_BITS(RLE_BITS),
+	.FLUSH_FREQ(FLUSH_FREQ)
 ) u_signal (
 	.clk(clk),
 	.systime(systime),
@@ -956,9 +961,9 @@ assign debug[16:12] = msg_cmd;
 assign debug[19:17] = 0;
 assign debug[23:20] = unit;
 assign debug[31:24] = stepper_debug;
-assign debug[47:32] = ether_debug;
-//assign debug[47:32] = as5311_debug;
-assign debug[52:48] = dro_debug;
+assign debug[42:32] = daq_debug;
+assign debug[52:43] = as5311_debug;
+//assign debug[52:48] = dro_debug;
 //assign debug[52:48] = 0;
 
 

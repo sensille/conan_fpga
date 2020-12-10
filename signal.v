@@ -7,7 +7,8 @@ module signal #(
 	parameter CMD_BITS = 8,
 	parameter CMD_CONFIG_SIGNAL = 0,
 	parameter SIG_WAIT_FRAC = 10,
-	parameter RLE_BITS = 20
+	parameter RLE_BITS = 20,
+	parameter FLUSH_FREQ = 100
 ) (
 	input wire clk,
 	input wire [63:0] systime,
@@ -62,6 +63,10 @@ reg prev_enabled = 0;
 /*
  * LRU input -> index lookup
  */
+reg [NSLOTS-1:0] pvalid = 0;
+localparam FLUSH_CNT = HZ / FLUSH_FREQ;
+localparam FLUSH_BITS = $clog2(FLUSH_CNT);
+reg [FLUSH_BITS-1:0] flush_timer = 0;
 integer j;
 always @(posedge clk) begin
 	recv <= signal & mask;
@@ -70,38 +75,47 @@ always @(posedge clk) begin
 	if (enabled == 0) begin
 		/* do nothing */
 	end else if (prev_enabled == 0) begin
-		pipeline[0] <= 0;
-		pipeline[1] <= 0;
-		pipeline[2] <= 0;
-		pipeline[3] <= 0;
-		pipeline[4] <= 0;
-		pipeline[5] <= 0;
-		pipeline[6] <= 0;
-	end else if (recv == pipeline[0]) begin
+		pvalid <= 0;
+		flush_timer <= FLUSH_CNT;
+	end else if (recv == pipeline[0] && pvalid[0]) begin
 		slot <= 1;
-	end else if (recv == pipeline[1]) begin
+	end else if (recv == pipeline[1] && pvalid[1]) begin
 		slot <= 2;
 		pipeline[0] <= recv;
 		pipeline[1] <= pipeline[0];
-	end else if (recv == pipeline[2]) begin
+		pvalid[0] <= 1;
+		pvalid[1] <= pvalid[0];
+	end else if (recv == pipeline[2] && pvalid[2]) begin
 		slot <= 3;
 		pipeline[0] <= recv;
 		pipeline[1] <= pipeline[0];
 		pipeline[2] <= pipeline[1];
-	end else if (recv == pipeline[3]) begin
+		pvalid[0] <= 1;
+		pvalid[1] <= pvalid[0];
+		pvalid[2] <= pvalid[1];
+	end else if (recv == pipeline[3] && pvalid[3]) begin
 		slot <= 4;
 		pipeline[0] <= recv;
 		pipeline[1] <= pipeline[0];
 		pipeline[2] <= pipeline[1];
 		pipeline[3] <= pipeline[2];
-	end else if (recv == pipeline[4]) begin
+		pvalid[0] <= 1;
+		pvalid[1] <= pvalid[0];
+		pvalid[2] <= pvalid[1];
+		pvalid[3] <= pvalid[2];
+	end else if (recv == pipeline[4] && pvalid[4]) begin
 		slot <= 5;
 		pipeline[0] <= recv;
 		pipeline[1] <= pipeline[0];
 		pipeline[2] <= pipeline[1];
 		pipeline[3] <= pipeline[2];
 		pipeline[4] <= pipeline[3];
-	end else if (recv == pipeline[5]) begin
+		pvalid[0] <= 1;
+		pvalid[1] <= pvalid[0];
+		pvalid[2] <= pvalid[1];
+		pvalid[3] <= pvalid[2];
+		pvalid[4] <= pvalid[3];
+	end else if (recv == pipeline[5] && pvalid[5]) begin
 		slot <= 6;
 		pipeline[0] <= recv;
 		pipeline[1] <= pipeline[0];
@@ -109,7 +123,13 @@ always @(posedge clk) begin
 		pipeline[3] <= pipeline[2];
 		pipeline[4] <= pipeline[3];
 		pipeline[5] <= pipeline[4];
-	end else if (recv == pipeline[6]) begin
+		pvalid[0] <= 1;
+		pvalid[1] <= pvalid[0];
+		pvalid[2] <= pvalid[1];
+		pvalid[3] <= pvalid[2];
+		pvalid[4] <= pvalid[3];
+		pvalid[5] <= pvalid[4];
+	end else if (recv == pipeline[6] && pvalid[6]) begin
 		slot <= 7;
 		pipeline[0] <= recv;
 		pipeline[1] <= pipeline[0];
@@ -118,6 +138,13 @@ always @(posedge clk) begin
 		pipeline[4] <= pipeline[3];
 		pipeline[5] <= pipeline[4];
 		pipeline[6] <= pipeline[5];
+		pvalid[0] <= 1;
+		pvalid[1] <= pvalid[0];
+		pvalid[2] <= pvalid[1];
+		pvalid[3] <= pvalid[2];
+		pvalid[4] <= pvalid[3];
+		pvalid[5] <= pvalid[4];
+		pvalid[6] <= pvalid[5];
 	end else begin
 		slot <= 0;
 		pipeline[0] <= recv;
@@ -127,6 +154,20 @@ always @(posedge clk) begin
 		pipeline[4] <= pipeline[3];
 		pipeline[5] <= pipeline[4];
 		pipeline[6] <= pipeline[5];
+		pvalid[0] <= 1;
+		pvalid[1] <= pvalid[0];
+		pvalid[2] <= pvalid[1];
+		pvalid[3] <= pvalid[2];
+		pvalid[4] <= pvalid[3];
+		pvalid[5] <= pvalid[4];
+		pvalid[6] <= pvalid[5];
+	end
+	if (flush_timer != 0) begin
+		flush_timer <= flush_timer - 1;
+		if (flush_timer == 1) begin
+			pvalid <= 0;
+			flush_timer <= FLUSH_CNT;
+		end
 	end
 end
 
@@ -137,7 +178,8 @@ localparam PLEN_BITS = $clog2(SIG_WIDTH + 3);
 reg [RLE_BITS-1:0] slot_cnt;
 reg [SIG_WIDTH-1:0] deferred;
 reg first_loop = 1;
-reg [SIG_WIDTH+2:0] push_data;
+localparam PD_BITS = (SIG_WIDTH + 3 > RLE_BITS + 6) ? SIG_WIDTH + 3 : RLE_BITS + 6;
+reg [PD_BITS-1:0] push_data;
 reg [PLEN_BITS-1:0] push_len = 0;
 reg [RLE_BITS-1:0] push_clks;
 reg [SLOT_BITS-1:0] prev_slot;
@@ -298,9 +340,10 @@ always @(posedge clk) begin
 	end else if (st_state == ST_WAIT_GRANT && daq_grant) begin
 		daq_req <= 0;
 		daq_data[31:24] <= DAQT_SIGNAL_DATA;
-		daq_data[23:16] <= fifo_out[36:32];
-		daq_data[15:8] <= st_len;
-		daq_data[7:0] <= SIG_WIDTH;
+		daq_data[23:18] <= fifo_out[36:32];
+		daq_data[17:13] <= RLE_BITS;
+		daq_data[12:8] <= SIG_WIDTH;
+		daq_data[7:0] <= st_len;
 		daq_valid <= 1;
 		fifo_out_rd_en <= 1; /* delayed, request two slots in advance */
 		st_state <= ST_HEADER_2;
@@ -321,7 +364,7 @@ always @(posedge clk) begin
 			st_len <= st_len - 1;
 			if (st_len > 2)
 				fifo_out_rd_en <= 1;
-			recovered_systime <= recovered_systime + fifo_out[37 + RLE_BITS - 1:37];
+			recovered_systime <= recovered_systime + fifo_out[37 + RLE_BITS:37];
 		end
 	end
 end

@@ -1961,6 +1961,11 @@ test_dro(sim_t *sp)
 			i += 2;
 			got_it = 1;
 			break;
+		case 0x40:
+			i += 1 + (d & 0xff);
+			if (i >= len)
+				fail("incomplete mcu packet\n");
+			break;
 		default:
 			fail("unknown daq packet type %d\n", type);
 			break;
@@ -2044,7 +2049,7 @@ test_signal(sim_t *sp)
 			break;
 		case 0x40:
 			printf("received signal packet len %d\n", (d >> 8) & 0xff);
-			i += 1 + (d >> 8) & 0xff;
+			i += 1 + (d & 0xff);
 			got_it = 1;
 			break;
 		default:
@@ -2059,7 +2064,9 @@ test_signal(sim_t *sp)
 printf("sleeping\n"); sleep(1000);
 #endif
 
+#if 0
 	uart_send_vlq_and_wait(sp, 3, CMD_ETHER_SET_STATE, 0, 1);
+#endif
 
 	watch_clear(sp->wp);
 }
@@ -2798,7 +2805,7 @@ test(sim_t *sp)
 #if 0
 	test_sd(sp);
 #endif
-#if 0
+#if 1
 	test_pwm(sp);
 	test_tmcuart(sp);
 	test_gpio(sp);

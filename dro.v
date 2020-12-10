@@ -274,7 +274,7 @@ always @(posedge clk) begin
 	end else if (state == PS_DRO_DAQ_1) begin
 		param_data[31:24] <= DAQT_DRO_DATA;
 		param_data[23:16] <= channel;
-		param_data[15:0] <= 0;
+		param_data[15:8] <= bits[channel];
 		daq_valid <= 1;
 		state <= PS_DRO_DAQ_2;
 	end else if (state == PS_DRO_DAQ_2) begin

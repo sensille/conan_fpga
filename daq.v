@@ -18,7 +18,9 @@ module daq #(
 	input wire daqo_data_rd_en,
 	output wire [MAC_PACKET_BITS-1:0] daqo_len,
 	output wire daqo_len_ready,
-	input wire daqo_len_rd_en
+	input wire daqo_len_rd_en,
+
+	output wire [15:0] debug
 );
 
 localparam NDAQ_BITS = $clog2(NDAQ);
@@ -140,5 +142,11 @@ always @(posedge clk) begin
 		end
 	end
 end
+
+assign debug[0] = state;
+assign debug[4:1] = daq;
+assign debug[9:5] = daq_req;
+assign debug[10] = len_fifo_empty;
+assign debug[15:11] = 0;
 
 endmodule

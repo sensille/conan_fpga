@@ -767,6 +767,7 @@ typedef struct _parser {
 	int		state;	/* parser state */
 	int		p_end;	/* end of current packet (excl.) */
 	int		rle_len;/* bit width of rle counter */
+	int		sig_width;/* bit width signal */
 	uint32_t	recv_systime; /* systime at start of packet */
 	int		resid_len;	/* residual from prev packet */
 	uint32_t	resid;
@@ -801,11 +802,14 @@ _get_bits(parser_t *p, int num, uint32_t *res)
 		h2 = p->buf[p->ptr++];
 		if ((h1 >> 24) != 0x40)
 			fail("not a signal packet (0x%02x)\n", h1 >> 24);
-		off = (h1 >> 16) & 0xff;
-		p->p_end = p->ptr + ((h1 >> 8) & 0xff);
-		if (p->not_first_packet && (h1 & 0xff) != p->rle_len)
+		off = (h1 >> 18) & 0x1f;
+		p->p_end = p->ptr + (h1 & 0xff);
+		if (p->not_first_packet && ((h1 >> 13) & 0x1f) != p->rle_len)
 			fail("rle len changed\n");
-		p->rle_len = h1 & 0xff;
+		p->rle_len = (h1 >> 13) & 0x1f;
+		if (p->not_first_packet && ((h1 >> 8) & 0x1f) != p->sig_width)
+			fail("sig width changed\n");
+		p->sig_width = (h1 >> 8) & 0x1f;
 		p->recv_systime = h2;
 		p->recv_off = off;
 		p->check_off = 1;
@@ -814,8 +818,8 @@ _get_bits(parser_t *p, int num, uint32_t *res)
 				fail("offset in first packet\n");
 		}
 		p->not_first_packet = 1;
-		printf("SOP: off %d ptr %d end %d rle_len %d systime %d\n", off,
-			p->ptr, p->p_end, p->rle_len, p->recv_systime);
+		printf("SOP: off %d ptr %d end %d rle_len %d sig_width %d systime %d\n",
+			off, p->ptr, p->p_end, p->rle_len, p->sig_width, p->recv_systime);
 		p->state = PST_IN_PACKET;
 		*res = 0;
 		return 0;
@@ -874,12 +878,11 @@ check_offset(parser_t *p)
 
 	p->check_off = 0;
 
-	if (p->systime != p->recv_systime || p->ix != p->recv_off) {
-		printf("own systime %d recv %d diff %d off %d recv %d\n",
-			p->systime, p->recv_systime, p->systime - p->recv_systime,
-			p->ix, p->recv_off);
+	printf("own systime %d recv %d diff %d off %d recv %d\n",
+		p->systime, p->recv_systime, p->systime - p->recv_systime,
+		p->ix, p->recv_off);
+	if (p->systime != p->recv_systime || p->ix != p->recv_off)
 		fail("bad systime/ix in header\n");
-	}
 }
 
 static void
@@ -892,11 +895,12 @@ expand_sig(parser_t *p, uint32_t *out, int outmax)
 	uint32_t pipeline[6] = { 0 };
 	int i;
 
+printf("rle_len %d sig_width %d\n", p->rle_len, p->sig_width);
 	while (1) {
 		check_offset(p);
 		slot = get_bits(p, 3);
 		if (slot == 0) {
-			sample = get_bits(p, 18);
+			sample = get_bits(p, p->sig_width);
 			printf("got direct %x\n", sample);
 			out[outlen++] = sample;
 			if (outlen == outmax)
@@ -916,7 +920,7 @@ expand_sig(parser_t *p, uint32_t *out, int outmax)
 					scnt = get_bits(p, 1);
 					if (scnt == 1)
 						fail("inval cnt encoding\n");
-					scnt = get_bits(p, 12);
+					scnt = get_bits(p, p->rle_len);
 				}
 			}
 			printf("got slot %d cnt %d\n", slot, scnt);
@@ -997,10 +1001,12 @@ test_signal(sim_t *sp)
 #endif
 	watch_add(sp->wp, "u_signal.push_len", "plen", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_signal.push_data", "pdata", NULL, FORM_BIN, WF_ALL);
+#if 0
 	watch_add(sp->wp, "u_signal.pbuf$", "pbuf", NULL, FORM_BIN, WF_ALL);
 	watch_add(sp->wp, "u_signal.pbuflen", "pblen", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_signal.stream_data$", "sd", NULL, FORM_BIN, WF_ALL);
 	watch_add(sp->wp, "u_signal.stream_data_valid", "sdv", NULL, FORM_BIN, WF_ALL);
+#endif
 	watch_add(sp->wp, "u_signal.state", "state", NULL, FORM_BIN, WF_ALL);
 	watch_add(sp->wp, "u_signal.st_state", "st_state", NULL, FORM_BIN, WF_ALL);
 	watch_add(sp->wp, "u_signal.fifo_elemcnt", "elemcnt", NULL, FORM_DEC, WF_ALL);
@@ -1009,6 +1015,7 @@ test_signal(sim_t *sp)
 	watch_add(sp->wp, "u_signal.st_timer", "timer", NULL, FORM_DEC, WF_ALL);
 #endif
 	watch_add(sp->wp, "u_signal.st_len", "len", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_signal.pvalid", "pvalid", NULL, FORM_DEC, WF_ALL);
 
 	delay(sp, 10);
 
@@ -1095,7 +1102,7 @@ test_signal(sim_t *sp)
 	}
 	send_and_test_stimulus(sp, stimulus, stimulus_size);
 
-#if 1
+#if 0
 printf("sleep\n"); sleep(1000);
 #endif
 	watch_clear(sp->wp);

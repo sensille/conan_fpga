@@ -73,7 +73,9 @@ daq #(
 	.daqo_data_rd_en(daqo_data_rd_en),
 	.daqo_len(daqo_len),
 	.daqo_len_ready(daqo_len_ready),
-	.daqo_len_rd_en(daqo_len_rd_en)
+	.daqo_len_rd_en(daqo_len_rd_en),
+
+	.debug()
 );
 
 reg [47:0] src_mac = 48'h123456789abc;
@@ -121,7 +123,8 @@ signal #(
 	.CMD_BITS(CMD_BITS),
 	.CMD_CONFIG_SIGNAL(28),
 	.SIG_WAIT_FRAC(1000),
-	.RLE_BITS(12)
+	.RLE_BITS(12),
+	.FLUSH_FREQ(10000)
 ) u_signal (
 	.clk(clk),
 	.systime(systime),

@@ -46,7 +46,7 @@ always @(posedge clk) begin
 		rdptr <= 0;
 		wrptr <= 0;
 	end else begin
-		if (rd_en && !empty) begin
+		if (rd_en && !_empty) begin
 			rdptr <= next_rdptr;
 		end
 		if (wr_en && !full) begin

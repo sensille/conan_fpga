@@ -18,7 +18,8 @@ module conan #(
 	parameter VERSION = 66,
 	parameter PACKET_WAIT_FRAC = 10,
 	parameter SIG_WAIT_FRAC = 10,
-	parameter RLE_BITS = 20
+	parameter RLE_BITS = 18,
+	parameter FLUSH_FREQ = 100
 ) (
 	input wire clk_50mhz,
 	input wire clk_48mhz,
@@ -455,7 +456,8 @@ command #(
 	.PACKET_WAIT_FRAC(PACKET_WAIT_FRAC),
 	.SIG_WIDTH(SIG_WIDTH),
 	.SIG_WAIT_FRAC(SIG_WAIT_FRAC),
-	.RLE_BITS(RLE_BITS)
+	.RLE_BITS(RLE_BITS),
+	.FLUSH_FREQ(FLUSH_FREQ)
 ) u_command (
 	.clk(clk),
 	.systime(systime),

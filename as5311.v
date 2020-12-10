@@ -64,11 +64,12 @@ localparam BITSIZE		= 18;
 localparam BITSIZE_BITS = $clog2(BITSIZE);
 
 reg [BITSIZE-1:0] data [NAS5311];
+reg [BITSIZE-1:0] data_out [NAS5311];
 reg [NAS5311-1:0] ftype = 0;
-reg [BITSIZE-1:0] prev_data [NAS5311];
-reg [BITSIZE-1:0] prev_magnet [NAS5311];
+reg [NAS5311-1:0] ftype_out = 0;
 reg [BITSIZE_BITS-1:0] bitcnt [NAS5311];
 reg [31:0] starttime [NAS5311];
+reg [31:0] starttime_out [NAS5311];
 reg [31:0] next_data [NAS5311];
 reg [31:0] next_mag [NAS5311];
 reg [31:0] data_interval [NAS5311];
@@ -114,8 +115,6 @@ integer i;
 initial begin
 	for (i = 0; i < NAS5311; i = i + 1) begin
 		data[i] = 0;
-		prev_data[i] = { BITSIZE { 1'b1 }};
-		prev_magnet[i] = { BITSIZE { 1'b1 }};
 		starttime[i] = 0;
 		next_data[i] = 0;
 		next_mag[i] = 0;
@@ -145,7 +144,6 @@ always @(posedge clk) begin
 			data_valid[i] <= 0;
 		end else if (as_state[i] == AS_IDLE && (data_pending[i] | mag_pending[i])) begin
 			data[i] <= 0;
-			data_valid[i] <= 0;
 			as5311_clk[i] <= data_pending[i];
 			ftype[i] <= data_pending[i];
 			if (data_pending[i])
@@ -177,19 +175,12 @@ always @(posedge clk) begin
 			as5311_cs[i] <= 1;
 			div[i] <= freq_divider[i];
 			data[i] <= { data[i][BITSIZE-2:0], as5311_do[i] };
-			if (ftype[i]) begin
-				if (data[i] != prev_data[i]) begin
-					data_valid[i] <= 1;
-					prev_data[i] <= data[i];
-				end
-			end else begin
-				if (data[i] != prev_magnet[i]) begin
-					data_valid[i] <= 1;
-					prev_magnet[i] <= data[i];
-				end
-			end
+			data_valid[i] <= 1;
 			as_state[i] <= AS_END;
 		end else if (as_state[i] == AS_END && div[i] == 1) begin
+			data_out[i] <= data[i];
+			starttime_out[i] <= starttime[i];
+			ftype_out[i] <= ftype[i];
 			as_state[i] <= AS_IDLE;
 		end else if (div[i] != 0) begin
 			div[i] <= div[i] - 1;
@@ -266,17 +257,17 @@ always @(posedge clk) begin
 		param_data <= RSP_AS5311_DATA;
 		state <= PS_IDLE;
 	end else if (state == PS_AS5311_DAQ_1) begin
-		if (ftype[channel])
+		if (ftype_out[channel])
 			param_data[31:24] <= DAQT_AS5311_DAT;
 		else
 			param_data[31:24] <= DAQT_AS5311_MAG;
 		param_data[23:18] <= channel;
-		param_data[17:0] <= data[channel];
+		param_data[17:0] <= data_out[channel];
 		daq_valid <= 1;
 		data_ack[channel] <= 1;
 		state <= PS_AS5311_DAQ_2;
 	end else if (state == PS_AS5311_DAQ_2) begin
-		param_data <= starttime[channel];
+		param_data <= starttime_out[channel];
 		daq_valid <= 1;
 		daq_end <= 1;
 		state <= PS_IDLE;
@@ -285,6 +276,6 @@ end
 
 assign debug[3:0] = state;
 assign debug[6:4] = as_state[0];
-assign debug[15:7] = 0;
+assign debug[15:7] = data_valid;
 
 endmodule
