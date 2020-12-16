@@ -501,7 +501,7 @@ dro #(
 	.shutdown(shutdown)
 );
 
-wire [15:0] as5311_debug;
+wire [19:0] as5311_debug;
 as5311 #(
 	.HZ(HZ),
 	.CMD_BITS(CMD_BITS),

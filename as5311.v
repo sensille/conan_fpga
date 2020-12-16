@@ -35,7 +35,7 @@ module as5311 #(
 	output reg daq_req = 0,
 	input wire daq_grant,
 
-	output wire [15:0] debug,
+	output wire [19:0] debug,
 
 	input wire shutdown	/* not used */
 );
@@ -175,10 +175,10 @@ always @(posedge clk) begin
 			as5311_cs[i] <= 1;
 			div[i] <= freq_divider[i];
 			data[i] <= { data[i][BITSIZE-2:0], as5311_do[i] };
-			data_valid[i] <= 1;
 			as_state[i] <= AS_END;
 		end else if (as_state[i] == AS_END && div[i] == 1) begin
 			data_out[i] <= data[i];
+			data_valid[i] <= 1;
 			starttime_out[i] <= starttime[i];
 			ftype_out[i] <= ftype[i];
 			as_state[i] <= AS_IDLE;
@@ -230,11 +230,13 @@ always @(posedge clk) begin
 		/* arbitrate, highest wins */
 		for (i = 0; i < NAS5311; i = i + 1) begin
 			if (data_valid[i]) begin
-				channel <= i;
-				if (use_daq[i] & daq_grant)
+				if (use_daq[i] & daq_grant) begin
+					channel <= i;
 					state <= PS_AS5311_DAQ_1;
-				else if (~use_daq[i] & invol_grant)
+				end else if (~use_daq[i] & invol_grant) begin
+					channel <= i;
 					state <= PS_AS5311_DATA_1;
+				end
 			end
 		end
 	end else if (state == PS_AS5311_DATA_1) begin
@@ -242,13 +244,13 @@ always @(posedge clk) begin
 		param_write <= 1;
 		state <= PS_AS5311_DATA_2;
 	end else if (state == PS_AS5311_DATA_2) begin
-		param_data <= starttime[channel];
+		param_data <= starttime_out[channel];
 		state <= PS_AS5311_DATA_3;
 	end else if (state == PS_AS5311_DATA_3) begin
-		param_data <= data[channel];
+		param_data <= data_out[channel];
 		state <= PS_AS5311_DATA_4;
 	end else if (state == PS_AS5311_DATA_4) begin
-		param_data <= ftype[channel];
+		param_data <= ftype_out[channel];
 		state <= PS_AS5311_DATA_5;
 		data_ack[channel] <= 1;
 	end else if (state == PS_AS5311_DATA_5) begin
@@ -276,6 +278,15 @@ end
 
 assign debug[3:0] = state;
 assign debug[6:4] = as_state[0];
-assign debug[15:7] = data_valid;
+assign debug[9:7] = as_state[1];
+assign debug[10] = data_valid[0];
+assign debug[11] = data_valid[1];
+assign debug[12] = data_ack[0];
+assign debug[13] = data_ack[1];
+assign debug[14] = data_pending[0];
+assign debug[15] = data_pending[1];
+assign debug[17:16] = channel;
+assign debug[18] = daq_req;
+assign debug[19] = daq_grant;
 
 endmodule
