@@ -296,7 +296,7 @@ reg send_type = 0;
 always @(posedge clk) begin
 	syst_daq_valid <= 0;
 	syst_daq_end <= 0;
-	if (systime_set_en || systime[25:0] == 26'hfffffff) begin
+	if (systime_set_en || systime[25:0] == 26'h3ffffff) begin
 		send_systime <= 1;
 		send_type <= systime_set_en;
 	end

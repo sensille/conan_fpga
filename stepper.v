@@ -225,6 +225,7 @@ reg temp_reg = 0;
 /* just keep asserted, we'll read one arg per clock */
 assign arg_advance = 1;
 reg _missed = 0;
+reg loop_done;
 always @(posedge clk) begin: main
 	integer i;
 
@@ -369,14 +370,17 @@ always @(posedge clk) begin: main
 		state <= PS_WAIT_GRANT;
 	end else if (state == PS_WAIT_GRANT && invol_grant) begin
 		invol_req <= 0;
+		/* verilator lint_off BLKSEQ */
+		loop_done = 0;
 		for (i = 0; i < NENDSTOP; i = i + 1) begin
-			if (endstop_send_state[i]) begin
+			if (!loop_done && endstop_send_state[i]) begin
 				endstop_send_state[i] <= 0;
 				channel <= i;
 				state <= PS_ENDSTOP_QUERY_1;
-				i = NENDSTOP;
+				loop_done = 1;
 			end
 		end
+		/* verilator lint_on BLKSEQ */
 	end
 
 	/*

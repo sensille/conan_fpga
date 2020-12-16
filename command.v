@@ -744,6 +744,7 @@ reg string_arg = 0;
 reg [STRLEN-1:0] str_len = 0;
 
 integer i;
+reg loop_done;
 always @(posedge clk) begin
 	if (msg_rd_en) begin
 		msg_rd_en <= 0;
@@ -930,17 +931,20 @@ always @(posedge clk) begin
 	 * been pulled at stage 1
 	 */
 	end else if (!msg_ready && msg_state == MST_IDLE) begin
+		/* verilator lint_off BLKSEQ */
+		loop_done = 0;
 		for (i = 0; i < NUNITS; i = i + 1) begin
-			if (unit_invol_req[i]) begin
+			if (!loop_done && unit_invol_req[i]) begin
 				unit <= i;
 				nparams <= 0;
 				curr_param <= 0;
 				cmd_has_response <= 1;
 				unit_invol_grant[i] <= 1;
 				msg_state <= MST_DISPATCH_WAIT_DONE;
-				i = NUNITS;
+				loop_done = 1;
 			end
 		end
+		/* verilator lint_on BLKSEQ */
 	end
 end
 
@@ -965,6 +969,5 @@ assign debug[42:32] = daq_debug;
 assign debug[52:43] = as5311_debug;
 //assign debug[52:48] = dro_debug;
 //assign debug[52:48] = 0;
-
 
 endmodule

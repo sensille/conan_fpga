@@ -227,6 +227,7 @@ always @(posedge clk) begin
 	end else if (state == PS_WAIT_GRANT && (invol_grant || daq_grant)) begin
 		invol_req <= 0;
 		daq_req <= 0;
+		/* arbitrate, highest wins */
 		for (i = 0; i < NAS5311; i = i + 1) begin
 			if (data_valid[i]) begin
 				channel <= i;
@@ -234,7 +235,6 @@ always @(posedge clk) begin
 					state <= PS_AS5311_DAQ_1;
 				else if (~use_daq[i] & invol_grant)
 					state <= PS_AS5311_DATA_1;
-				i = NAS5311;
 			end
 		end
 	end else if (state == PS_AS5311_DATA_1) begin

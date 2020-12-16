@@ -147,11 +147,11 @@ always @(posedge clk) begin
 		latched_output_start <= sd_output_start;
 	end else if (state == PS_WAIT_GRANT && invol_grant) begin
 		invol_req <= 0;
+		/* arbitrate, highest wins */
 		for (i = 0; i < NSD; i = i + 1) begin
 			if (latched_output_start[i]) begin
 				channel <= i;
 				state <= PS_SD_OUT_1;
-				i = NSD;	/* break */
 			end
 		end
 	end else if (state == PS_SD_OUT_1) begin

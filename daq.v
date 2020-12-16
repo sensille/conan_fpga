@@ -90,14 +90,13 @@ integer i;
 reg discard = 0;
 reg [NDAQ_BITS-1:0] daq;
 reg [23:0] discarded_pkts = 0;
+reg loop_done;
 always @(posedge clk) begin
 	if (!inited)
 		wptr <= 0;
 	len_fifo_wr_en <= 0;
-	for (i = 0; i < NDAQ; i = i + 1) begin
-		if (daq_grant[i])
-			daq_grant[i] <= 0;
-	end
+	daq_grant <= 0;
+
 	if (state == DA_IDLE && discarded_pkts && !data_ring_full) begin
 		data_ring[wptr] <= { 8'hfe, discarded_pkts };
 		wptr <= wptr + 1;
@@ -106,16 +105,19 @@ always @(posedge clk) begin
 		len_fifo_wr_en <= 1;
 	end else if (state == DA_IDLE) begin
 		/* for now just use a priority encoder */
+		/* verilator lint_off BLKSEQ */
+		loop_done = 0;
 		for (i = 0; i < NDAQ; i = i + 1) begin
-			if (daq_req[i]) begin
+			if (!loop_done && daq_req[i]) begin
 				daq <= i;
 				daq_grant[i] <= 1;
 				len_fifo_data <= 0;
 				saved_wptr <= wptr;
 				state <= DA_GRANTED;
-				i = NDAQ;
+				loop_done = 1;
 			end
 		end
+		/* verilator lint_on BLKSEQ */
 	end else if (state == DA_GRANTED) begin
 		if (daq_valid[daq]) begin
 			if (!discard) begin
