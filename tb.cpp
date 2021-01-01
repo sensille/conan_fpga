@@ -39,6 +39,8 @@ static int color_disabled = 1;
 #define CMD_ETHER_MD_WRITE	26
 #define CMD_ETHER_SET_STATE	27
 #define CMD_CONFIG_SIGNAL	28
+#define CMD_CONFIG_BISS		29
+#define CMD_BISS_FRAME		30
 
 #define RSP_GET_VERSION		0
 #define RSP_GET_TIME		1
@@ -52,6 +54,7 @@ static int color_disabled = 1;
 #define RSP_SD_CMDQ		9
 #define RSP_SD_DATQ		10
 #define RSP_ETHER_MD_READ	11
+#define RSP_BISS_FRAME		12
 
 #define HZ 48000000
 #define NUART 6
@@ -955,7 +958,7 @@ wait_for_uart_vlq(sim_t *sp, int _n, uint32_t *vlq)
 		}
 	}
 	if (len != 0) {
-		printf("parsing recv buffer has leftover\n");
+		printf("parsing recv buffer has leftover %d\n", len);
 		exit(1);
 	}
 	/* clear recv buffer, bump seq */
@@ -1003,9 +1006,9 @@ test_version(sim_t *sp)
 	watch_add(wp, "u_command.msg_state", "cstate", NULL, FORM_DEC, WF_ALL);
 
 	/* send version request */
-	uint32_t rsp[4];
+	uint32_t rsp[8];
 	uart_send_vlq(sp, 1, CMD_GET_VERSION);
-	wait_for_uart_vlq(sp, 4, rsp);
+	wait_for_uart_vlq(sp, 6, rsp);
 
 	if (rsp[0] != 0 || rsp[1] != 0x42) {
 		printf("received incorrect version rsp\n");
@@ -2199,6 +2202,160 @@ test_as5311(sim_t *sp)
 	watch_clear(sp->wp);
 }
 
+static int
+biss_send(sim_t *sp, uint32_t val, int bits, uint32_t freq, uint32_t timeout)
+{
+	Vconan *tb = sp->tb;
+	int i;
+	int b;
+	int cdm;
+	vluint8_t *sli = &tb->exp1_13;
+	vluint8_t *slo = &tb->exp1_15;
+	vluint8_t *ma = &tb->exp1_11;
+
+	/* discard unused upper bits */
+	val <<= 32 - bits;
+
+	*slo = 1;
+
+	if (*ma == 0)
+		fail("biss ma low at start at %d\n", sp->cycle);
+	if (*sli)
+		fail("biss sli low at start\n");
+
+	/* wait for clock to go low */
+	for (i = 0; i < 100000; ++i) {
+		if (*ma == 0)
+			break;
+		delay(sp, 1);
+	}
+	if (i == timeout)
+		fail("ma never went low\n");
+
+	for (b = 0; b < bits; ++b) {
+		/* wait for clock to go high */
+		for (i = 0; i < freq; ++i) {
+			if (*ma == 1)
+				fail("ma high too early at \n", i);
+			delay(sp, 1);
+		}
+		if (*ma == 0)
+			fail("ma high too late for bit %d\n", b);
+		*slo = !!(val & (1 << 31));
+		val <<= 1;
+		if (b + 1 == bits)
+			break;
+		/* wait for clock to go low */
+		for (i = 0; i < freq; ++i) {
+			if (*ma == 0)
+				fail("ma low too early at \n", i);
+			delay(sp, 1);
+		}
+		if (*ma == 1)
+			fail("ma not low too late\n");
+	}
+	/* last hi period */
+	for (i = 0; i < freq; ++i) {
+		if (*ma == 0)
+			fail("ma last high ends too early at %d\n", i);
+		delay(sp, 1);
+	}
+
+	cdm = *ma;
+
+	for (i = 0; i < timeout; ++i) {
+		if (*ma != cdm)
+			fail("ma changed too early in timeout\n");
+		delay(sp, 1);
+	}
+	if (*ma == 0)
+		fail("ma not high after timeout\n");
+
+	return cdm;
+}
+
+static void
+test_biss(sim_t *sp)
+{
+	Vconan *tb = sp->tb;
+	int i;
+	int cdm;
+	uint32_t rsp[10];
+	uint32_t freq = HZ / 500000; /* 2us */
+	uint32_t timeout = HZ / 50000; /* 20us */
+	uint32_t data;
+
+	tb->exp1_15 = 1;	/* slave idle */
+
+	watch_add(sp->wp, "u_biss.state", "state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "exp1_13", "sli", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "exp1_11", "ma", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "exp1_15", "slo", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_biss.bit_cnt", "bit_cnt", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_biss.in_cnt", "in_cnt", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_biss.param_data", "p_data", NULL, FORM_HEX, WF_ALL);
+
+	uart_send_vlq_and_wait(sp, 4, CMD_CONFIG_BISS, 0, freq, timeout);
+
+	uart_send_vlq(sp, 4, CMD_BISS_FRAME, 0, 0, 24);
+
+	data = 0x123456;
+	cdm = biss_send(sp, data, 24, freq, timeout);
+
+	/*
+	 * we receive one 1 at the start (initial slo high) and don't receive
+	 * the last bit anymore (the stop bit). Adjust the expectation accordingly
+	 */
+	data >>= 1;
+	data |= 1 << 23;
+
+	if (cdm != 0)
+		fail("expected cdm 0\n");
+
+	wait_for_uart_vlq(sp, -3, rsp);
+	if (rsp[0] != RSP_BISS_FRAME)
+		fail("read biss frame\n");
+	if (rsp[1] != 0)
+		fail("biss frame bad channel %d\n", rsp[1]);
+	if (rsp[2] != 3)
+		fail("biss frame bad length\n");
+	if (rsp[3] != ((data >> 16) & 0xff))
+		fail("biss frame bad byte 0 %02x\n", rsp[3]);
+	if (rsp[4] != ((data >> 8) & 0xff))
+		fail("biss frame bad byte 1 %02x\n", rsp[4]);
+	if (rsp[5] != ((data >> 0) & 0xff))
+		fail("biss frame bad byte 2 %02x\n", rsp[5]);
+
+	uart_send_vlq(sp, 4, CMD_BISS_FRAME, 0, 1, 25);
+
+	data = 0x654321;
+	cdm = biss_send(sp, 0x654321, 25, freq, timeout);
+
+	if (cdm != 1)
+		fail("expected cdm 1\n");
+
+	data >>= 1;
+	data |= 1 << 24;
+
+	wait_for_uart_vlq(sp, -3, rsp);
+	if (rsp[0] != RSP_BISS_FRAME)
+		fail("read biss frame\n");
+	if (rsp[1] != 0)
+		fail("biss frame bad channel %d\n", rsp[1]);
+	if (rsp[2] != 4)
+		fail("biss frame bad length\n");
+	if (rsp[3] != ((data >> 17) & 0xff))
+		fail("biss frame bad byte 0 %02x\n", rsp[3]);
+	if (rsp[4] != ((data >> 9) & 0xff))
+		fail("biss frame bad byte 0 %02x\n", rsp[4]);
+	if (rsp[5] != ((data >> 1) & 0xff))
+		fail("biss frame bad byte 1 %02x\n", rsp[5]);
+	if (rsp[6] != ((data >> 0) & 0x1))
+		fail("biss frame bad byte 2 %02x\n", rsp[6]);
+
+	watch_clear(sp->wp);
+}
+
 static void
 sd_tick(sim_t *sp)
 {
@@ -2757,7 +2914,7 @@ test_ether(sim_t *sp)
 	/* send something to the mcu to get some logging */
 	delay(sp, 10);
 	uart_send_vlq(sp, 1, CMD_GET_VERSION);
-	wait_for_uart_vlq(sp, 4, rsp);
+	wait_for_uart_vlq(sp, 6, rsp);
 
 	len = get_packet(sp, &eth, buf, sizeof(buf) / sizeof(*buf));
 	uint8_t last_rx = 0;
@@ -2802,6 +2959,7 @@ test(sim_t *sp)
 	test_time(sp);	/* always needed as time sync */
 	test_version(sp);
 	test_ether(sp);
+	test_biss(sp);
 #if 0
 	test_sd(sp);
 #endif

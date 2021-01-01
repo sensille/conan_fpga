@@ -15,6 +15,7 @@ module command #(
 	parameter NAS5311 = 0,
 	parameter NSD = 0,
 	parameter NETHER = 0,
+	parameter NBISS = 0,
 	parameter VERSION = 0,
 	parameter PACKET_WAIT_FRAC = 0,
 	parameter SIG_WIDTH = 0,
@@ -88,6 +89,10 @@ module command #(
 	output wire [NETHER-1:0] eth_mdio_out,
 	output wire [NETHER-1:0] eth_mdio_en,
 
+	output wire [NBISS-1:0] biss_ma,
+	output wire [NBISS-1:0] biss_mo,
+	input wire [NBISS-1:0] biss_mi,
+
 	input wire [63:0] time_in,
 	output wire [63:0] time_out,
 	output wire time_out_en,
@@ -137,7 +142,8 @@ localparam UNIT_AS5311		= 4'd6;
 localparam UNIT_SD		= 4'd7;
 localparam UNIT_ETHER		= 4'd8;
 localparam UNIT_SIGNAL		= 4'd9;
-localparam NUNITS		= 4'd10;
+localparam UNIT_BISS		= 4'd10;
+localparam NUNITS		= 4'd11;
 
 localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 2;
 localparam CMD_GET_VERSION		= 0;
@@ -169,7 +175,9 @@ localparam CMD_ETHER_MD_READ		= 25;
 localparam CMD_ETHER_MD_WRITE		= 26;
 localparam CMD_ETHER_SET_STATE		= 27;
 localparam CMD_CONFIG_SIGNAL		= 28;
-localparam NCMDS			= 29;
+localparam CMD_CONFIG_BISS		= 29;
+localparam CMD_BISS_FRAME		= 30;
+localparam NCMDS			= 31;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
@@ -184,6 +192,7 @@ localparam RSP_AS5311_DATA	= 8;
 localparam RSP_SD_CMDQ		= 9;
 localparam RSP_SD_DATQ		= 10;
 localparam RSP_ETHER_MD_READ	= 11;
+localparam RSP_BISS_FRAME	= 12;
 
 localparam MISSED_STEPPER	= 0;
 localparam MISSED_ENDSTOP	= 1;
@@ -234,6 +243,8 @@ initial begin
 	cmdtab[CMD_ETHER_MD_WRITE] = { UNIT_ETHER, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_ETHER_SET_STATE] = { UNIT_ETHER, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_CONFIG_SIGNAL] = { UNIT_SIGNAL, ARGS_2, 1'b0, 1'b0 };
+	cmdtab[CMD_CONFIG_BISS] = { UNIT_BISS, ARGS_3, 1'b0, 1'b0 };
+	cmdtab[CMD_BISS_FRAME] = { UNIT_BISS, ARGS_3, 1'b0, 1'b1 };
 end
 
 /*
@@ -327,6 +338,7 @@ system #(
 	.NAS5311(NAS5311),
 	.NSD(NSD),
 	.NETHER(NETHER),
+	.NBISS(NBISS),
 	.MISSED_BITS(MISSED_BITS),
 	.CMD_BITS(CMD_BITS)
 ) u_system (
@@ -699,6 +711,34 @@ signal #(
 	.daq_grant(daq_grant[DAQ_SIGNAL]),
 
 	.signal(signal)
+);
+
+biss #(
+	.HZ(HZ),
+	.CMD_BITS(CMD_BITS),
+	.NBISS(NBISS),
+	.CMD_CONFIG_BISS(CMD_CONFIG_BISS),
+	.CMD_BISS_FRAME(CMD_BISS_FRAME),
+	.RSP_BISS_FRAME(RSP_BISS_FRAME)
+) u_biss (
+	.clk(clk),
+	.systime(systime),
+
+	.arg_data(unit_arg_data),
+	.arg_advance(unit_arg_advance[UNIT_BISS]),
+	.cmd(unit_cmd),
+	.cmd_ready(unit_cmd_ready[UNIT_BISS]),
+	.cmd_done(unit_cmd_done[UNIT_BISS]),
+	.param_data(unit_param_data[UNIT_BISS]),
+	.param_write(unit_param_write[UNIT_BISS]),
+	.invol_req(unit_invol_req[UNIT_BISS]),
+	.invol_grant(unit_invol_grant[UNIT_BISS]),
+
+	.biss_ma(biss_ma),
+	.biss_mo(biss_mo),
+	.biss_mi(biss_mi),
+
+	.debug()
 );
 
 localparam MST_IDLE = 0;

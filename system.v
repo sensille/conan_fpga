@@ -21,6 +21,7 @@ module system #(
 	parameter NAS5311 = 0,
 	parameter NSD = 0,
 	parameter NETHER = 0,
+	parameter NBISS = 0,
 	parameter MISSED_BITS = 0
 ) (
 	input wire clk,
@@ -59,13 +60,15 @@ localparam PS_IDLE = 0;
 localparam PS_GET_VERSION_1 = 1;
 localparam PS_GET_VERSION_2 = 2;
 localparam PS_GET_VERSION_3 = 3;
-localparam PS_SYNC_TIME_1 = 4;
-localparam PS_GET_TIME_1  = 5;
-localparam PS_GET_TIME_2  = 6;
-localparam PS_WAIT_GRANT  = 7;
-localparam PS_SEND_SHUTDOWN_1  = 8;
-localparam PS_SEND_SHUTDOWN_2  = 9;
-localparam PS_MAX = 9;
+localparam PS_GET_VERSION_4 = 4;
+localparam PS_GET_VERSION_5 = 5;
+localparam PS_SYNC_TIME_1 = 6;
+localparam PS_GET_TIME_1  = 7;
+localparam PS_GET_TIME_2  = 8;
+localparam PS_WAIT_GRANT  = 9;
+localparam PS_SEND_SHUTDOWN_1  = 10;
+localparam PS_SEND_SHUTDOWN_2  = 11;
+localparam PS_MAX = 11;
 localparam PS_BITS = $clog2(PS_MAX + 1);
 
 reg [63:0] latched_time = 0;
@@ -106,14 +109,21 @@ always @(posedge clk) begin
 		param_data[7:0] <= NENDSTOP;
 		state <= PS_GET_VERSION_2;
 	end else if (state == PS_GET_VERSION_2) begin
-		param_data[31:28] <= NUART;
-		param_data[27:26] <= NSD;
-		param_data[25:24] <= NETHER;
-		param_data[23:20] <= NAS5311;
-		param_data[19:16] <= NDRO;
-		param_data[15:0] <= MOVE_COUNT;
+		param_data[31:24] <= NUART;
+		param_data[23:16] <= NSD;
+		param_data[15:8] <= NETHER;
+		param_data[7:0] <= NAS5311;
 		state <= PS_GET_VERSION_3;
 	end else if (state == PS_GET_VERSION_3) begin
+		param_data[31:24] <= NDRO;
+		param_data[23:16] <= NBISS;
+		param_data[15:0] <= 0;
+		state <= PS_GET_VERSION_4;
+	end else if (state == PS_GET_VERSION_4) begin
+		param_data[31:16] <= 0;
+		param_data[15:0] <= MOVE_COUNT;
+		state <= PS_GET_VERSION_5;
+	end else if (state == PS_GET_VERSION_5) begin
 		cmd_done <= 1;
 		param_write <= 0;
 		param_data <= RSP_GET_VERSION;

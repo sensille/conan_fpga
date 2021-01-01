@@ -15,6 +15,7 @@ module conan #(
 	parameter NAS5311 = 3,
 	parameter NSD = 1,
 	parameter NETHER = 1,
+	parameter NBISS = 1,
 	parameter VERSION = 66,
 	parameter PACKET_WAIT_FRAC = 10,
 	parameter SIG_WAIT_FRAC = 10,
@@ -55,9 +56,9 @@ module conan #(
 	input wire exp1_16,
 	input wire exp1_15,
 	input wire exp1_14,
-	input wire exp1_13,
+	output wire exp1_13,
 	input wire exp1_12,
-	input wire exp1_11,
+	output wire exp1_11,
 	input wire exp1_10,
 	input wire exp1_9,
 	input wire exp1_8,
@@ -436,6 +437,10 @@ wire [NETHER-1:0] eth_mdio_in;
 wire [NETHER-1:0] eth_mdio_out;
 wire [NETHER-1:0] eth_mdio_en;
 
+wire [NBISS-1:0] biss_ma;
+wire [NBISS-1:0] biss_mo;
+wire [NBISS-1:0] biss_mi;
+
 reg req_shutdown = 0;
 
 command #(
@@ -452,6 +457,7 @@ command #(
 	.NAS5311(NAS5311),
 	.NSD(NSD),
 	.NETHER(NETHER),
+	.NBISS(NBISS),
 	.VERSION(VERSION),
 	.PACKET_WAIT_FRAC(PACKET_WAIT_FRAC),
 	.SIG_WIDTH(SIG_WIDTH),
@@ -521,6 +527,10 @@ command #(
 	.eth_mdio_in(eth_mdio_in),
 	.eth_mdio_en(eth_mdio_en),
 
+	.biss_ma(biss_ma),
+	.biss_mo(biss_mo),
+	.biss_mi(biss_mi),
+
 	.time_in(systime),
 	.time_out(systime_set),
 	.time_out_en(systime_set_en),
@@ -583,6 +593,14 @@ assign as5311_do[1] = exp1_6;
 assign exp2_1 = as5311_clk[2];
 assign exp2_2 = as5311_cs[2];
 assign as5311_do[2] = exp2_3;
+
+assign exp1_11 = biss_ma[0];
+assign exp1_13 = biss_mo[0];
+assign biss_mi[0] = exp1_15;
+
+wire [NBISS-1:0] biss_ma;
+wire [NBISS-1:0] biss_mo;
+wire [NBISS-1:0] biss_mi;
 /*
  * Stepper driver
  */

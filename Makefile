@@ -7,7 +7,7 @@ VINC=/usr/local/share/verilator/include
 
 SRC = led7219.v pll.v uart.v framing.v fifo.v command.v pwm.v system.v \
        stepper.v stepdir.v tmcuart.v gpio.v dro.v as5311.v sd.v sdc.v \
-       mac.v ether.v daq.v uartlog.v signal.v $(TARGET).v
+       mac.v ether.v daq.v uartlog.v signal.v biss.v $(TARGET).v
 
 DAQ_SRC = mac.v ether.v daq.v tb_daq.v
 
