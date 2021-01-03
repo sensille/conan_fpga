@@ -924,13 +924,11 @@ printf("rle_len %d sig_width %d\n", p->rle_len, p->sig_width);
 				}
 			}
 			printf("got slot %d cnt %d\n", slot, scnt);
+			sample = pipeline[slot - 1];
+			memmove(pipeline + 1, pipeline + 0, sizeof(*pipeline) * (slot - 1));
+			pipeline[0] = sample;
+			printf("sample %x cnt %d\n", sample, scnt);
 			for (i = 0; i < scnt; ++i) {
-				sample = pipeline[slot - 1];
-				memmove(pipeline + 1, pipeline + 0, sizeof(*pipeline) * (slot - 1));
-				pipeline[0] = sample;
-#if 1
-				printf("sample %x\n", sample);
-#endif
 				out[outlen++] = sample;
 				if (outlen == outmax)
 					return;
@@ -977,7 +975,8 @@ send_and_test_stimulus(sim_t *sp, uint32_t *buf, int len)
 
 	for (i = 0; i < len; ++i)
 		if (out[i + 3] != buf[i])
-			fail("received data differ at %d\n", i);
+			fail("received data differ at %d: %x != %x\n", i,
+				out[i + 3], buf[i]);
 
 	free(out);
 	free(result);
@@ -995,6 +994,7 @@ test_signal(sim_t *sp)
 	watch_add(sp->wp, "u_signal.signal", "in", NULL, FORM_HEX, WF_ALL);
 	watch_add(sp->wp, "u_signal.recv", "recv", NULL, FORM_HEX, WF_ALL);
 	watch_add(sp->wp, "u_signal.pipeline", "pipeline", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_signal.pvalid", "pvalid", NULL, FORM_BIN, WF_ALL);
 	watch_add(sp->wp, "u_signal.slot$", "slot", NULL, FORM_HEX, WF_ALL);
 #if 0
 	watch_add(sp->wp, "u_signal.slot_cnt$", "scnt", NULL, FORM_HEX, WF_ALL);
@@ -1015,7 +1015,6 @@ test_signal(sim_t *sp)
 	watch_add(sp->wp, "u_signal.st_timer", "timer", NULL, FORM_DEC, WF_ALL);
 #endif
 	watch_add(sp->wp, "u_signal.st_len", "len", NULL, FORM_DEC, WF_ALL);
-	watch_add(sp->wp, "u_signal.pvalid", "pvalid", NULL, FORM_DEC, WF_ALL);
 
 	delay(sp, 10);
 
@@ -1080,9 +1079,8 @@ test(sim_t *sp)
 {
 	delay(sp, 1);	/* pass back control after initialization */
 
-	test_daq(sp);
 #if 0
-	test_abz(sp);
+	test_daq(sp);
 #endif
 	test_signal(sp);
 

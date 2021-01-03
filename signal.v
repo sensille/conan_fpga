@@ -173,6 +173,14 @@ end
 
 /*
  * RLE on slot
+ *
+ * Optimization: if we encounter an already known after an input change,
+ * first packet would be slot <n> with count 1. The next packet would be
+ * slot 1 with count <c>. Pull both into one packet with slot <n> count
+ * <c>. Nevertheless the input value will move from slot <n> to slot 1
+ * after the first clock. So we have to take care to encode the situation
+ * where the actual slot order is <n> <n> not as slot <n> count 2, but as
+ * slot <n> count 1, slot <n> count 1.
  */
 reg [RLE_BITS-1:0] slot_cnt;
 reg [SIG_WIDTH-1:0] deferred;
@@ -183,6 +191,7 @@ reg [PD_BITS-1:0] push_data;
 reg [PLEN_BITS-1:0] push_len = 0;
 reg [RLE_BITS-1:0] push_clks;
 reg [SLOT_BITS-1:0] prev_slot;
+reg [SLOT_BITS-1:0] starting_slot;
 always @(posedge clk) begin
 	push_len <= 0;
 	if (enabled == 0) begin
@@ -193,13 +202,13 @@ always @(posedge clk) begin
 	end else if (slot == 0 && prev_slot != 0) begin
 		if (slot_cnt[RLE_BITS-1:4] == 0) begin
 			push_len <= SLOT_BITS + 5;
-			push_data <= { prev_slot, 1'b0, slot_cnt[3:0] };
+			push_data <= { starting_slot, 1'b0, slot_cnt[3:0] };
 		end else if (slot_cnt[RLE_BITS-1:8] == 0) begin
 			push_len <= SLOT_BITS + 10;
-			push_data <= { prev_slot, 2'b10, slot_cnt[7:0] };
+			push_data <= { starting_slot, 2'b10, slot_cnt[7:0] };
 		end else begin
 			push_len <= SLOT_BITS + 3 + RLE_BITS;
-			push_data <= { prev_slot, 3'b110, slot_cnt };
+			push_data <= { starting_slot, 3'b110, slot_cnt };
 		end
 		push_clks <= slot_cnt;
 		deferred <= pipeline[0];
@@ -217,21 +226,23 @@ always @(posedge clk) begin
 			push_clks <= 1;
 		end
 		slot_cnt <= 1;
-	end else if (slot == prev_slot && slot_cnt != (1 << RLE_BITS) - 1) begin
+		starting_slot <= slot;
+	end else if (slot == 1 && slot_cnt != (1 << RLE_BITS) - 1) begin
 		slot_cnt <= slot_cnt + 1;
 	end else begin
 		if (slot_cnt[RLE_BITS-1:4] == 0) begin
 			push_len <= SLOT_BITS + 5;
-			push_data <= { prev_slot, 1'b0, slot_cnt[3:0] };
+			push_data <= { starting_slot, 1'b0, slot_cnt[3:0] };
 		end else if (slot_cnt[RLE_BITS-1:8] == 0) begin
 			push_len <= SLOT_BITS + 10;
-			push_data <= { prev_slot, 2'b10, slot_cnt[7:0] };
+			push_data <= { starting_slot, 2'b10, slot_cnt[7:0] };
 		end else begin
 			push_len <= SLOT_BITS + 3 + RLE_BITS;
-			push_data <= { prev_slot, 3'b110, slot_cnt };
+			push_data <= { starting_slot, 3'b110, slot_cnt };
 		end
 		push_clks <= slot_cnt;
 		slot_cnt <= 1;
+		starting_slot <= slot;
 	end
 	prev_slot <= slot;
 	first_loop <= 0;
