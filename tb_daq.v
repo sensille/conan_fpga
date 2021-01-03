@@ -121,10 +121,11 @@ signal #(
 	.HZ(HZ),
 	.SIG_WIDTH(SIG_WIDTH),
 	.CMD_BITS(CMD_BITS),
-	.CMD_CONFIG_SIGNAL(28),
+	.CMD_CONFIG(28),
 	.SIG_WAIT_FRAC(1000),
 	.RLE_BITS(12),
-	.FLUSH_FREQ(10000)
+	.FLUSH_FREQ(10000),
+	.DAQT_DATA(64)
 ) u_signal (
 	.clk(clk),
 	.systime(systime),

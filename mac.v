@@ -143,7 +143,8 @@ always @(posedge rx_clk) begin
 		end
 	end else if (len_wait == 0 && len_ready) begin
 		if (enable == ES_DISCARD) begin
-			discard_len <= daqo_len;
+			discard_len <= daqo_len + next_len;
+			next_len <= 0;
 			len_rd_en <= !len_rd_en; /* toggle triggers one read */
 		end else if (enable == ES_QUEUE) begin
 			/* just leave the packet in the queue */

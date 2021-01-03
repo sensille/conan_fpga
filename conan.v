@@ -16,6 +16,7 @@ module conan #(
 	parameter NSD = 1,
 	parameter NETHER = 1,
 	parameter NBISS = 1,
+	parameter NABZ = 3,
 	parameter VERSION = 66,
 	parameter PACKET_WAIT_FRAC = 10,
 	parameter SIG_WAIT_FRAC = 10,
@@ -441,6 +442,10 @@ wire [NBISS-1:0] biss_ma;
 wire [NBISS-1:0] biss_mo;
 wire [NBISS-1:0] biss_mi;
 
+wire [NABZ-1:0] abz_a;
+wire [NABZ-1:0] abz_b;
+wire [NABZ-1:0] abz_z;
+
 reg req_shutdown = 0;
 
 command #(
@@ -458,6 +463,7 @@ command #(
 	.NSD(NSD),
 	.NETHER(NETHER),
 	.NBISS(NBISS),
+	.NABZ(NABZ),
 	.VERSION(VERSION),
 	.PACKET_WAIT_FRAC(PACKET_WAIT_FRAC),
 	.SIG_WIDTH(SIG_WIDTH),
@@ -531,6 +537,10 @@ command #(
 	.biss_mo(biss_mo),
 	.biss_mi(biss_mi),
 
+	.abz_a(abz_a),
+	.abz_b(abz_b),
+	.abz_z(abz_z),
+
 	.time_in(systime),
 	.time_out(systime_set),
 	.time_out_en(systime_set_en),
@@ -598,9 +608,16 @@ assign exp1_11 = biss_ma[0];
 assign exp1_13 = biss_mo[0];
 assign biss_mi[0] = exp1_15;
 
-wire [NBISS-1:0] biss_ma;
-wire [NBISS-1:0] biss_mo;
-wire [NBISS-1:0] biss_mi;
+assign abz_a[0] = exp1_17;
+assign abz_b[0] = exp1_14;
+assign abz_z[0] = exp1_16;
+assign abz_a[1] = 0;
+assign abz_b[1] = 0;
+assign abz_z[1] = 0;
+assign abz_a[2] = 0;
+assign abz_b[2] = 0;
+assign abz_z[2] = 0;
+
 /*
  * Stepper driver
  */

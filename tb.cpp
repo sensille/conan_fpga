@@ -41,6 +41,7 @@ static int color_disabled = 1;
 #define CMD_CONFIG_SIGNAL	28
 #define CMD_CONFIG_BISS		29
 #define CMD_BISS_FRAME		30
+#define CMD_CONFIG_ABZ		31
 
 #define RSP_GET_VERSION		0
 #define RSP_GET_TIME		1
@@ -2075,6 +2076,126 @@ printf("sleeping\n"); sleep(1000);
 }
 
 static void
+test_drain(sim_t *sp)
+{
+	Vconan *tb = sp->tb;
+	int i;
+	uint32_t rsp[5];
+	uint32_t buf[500];
+
+	watch_add(sp->wp, "u_daq.state", "daq.state", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.rptr$", "rptr", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.wptr$", "wptr", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.daqo_data$", "odata", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_daq.daqo_len$", "olen", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.daqo_len_ready$", "olen_ready", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_daq.daqo_len_rd_en$", "olen_rd_en", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_mac.discard_len$", "discard_len", NULL, FORM_DEC, WF_ALL);
+
+	/* drain existing packets */
+	uart_send_vlq_and_wait(sp, 3, CMD_ETHER_SET_STATE, 0, 1);
+	delay(sp, 40000);
+
+	if (tb->conan__DOT__u_command__DOT__u_daq__DOT__rptr !=
+	    tb->conan__DOT__u_command__DOT__u_daq__DOT__wptr)
+		fail("daq queue not drained\n");
+
+	uart_send_vlq_and_wait(sp, 3, CMD_ETHER_SET_STATE, 0, 2); /* set running */
+
+	watch_clear(sp->wp);
+}
+
+static void
+test_abz(sim_t *sp)
+{
+	Vconan *tb = sp->tb;
+	int i;
+	uint32_t rsp[5];
+	uint32_t buf[500];
+
+#if 0
+	watch_add(sp->wp, "u_abz.systime", "in", NULL, FORM_DEC, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_abz.signal", "in", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_abz.recv", "recv", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_abz.pipeline", "pipeline", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_abz.slot$", "slot", NULL, FORM_HEX, WF_ALL);
+#if 0
+	watch_add(sp->wp, "u_abz.slot_cnt$", "scnt", NULL, FORM_DEC, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_abz.push_len", "plen", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_abz.push_data", "pdata", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_abz.pbuflen", "pbuflen", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_abz.stream_data$", "sd", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_abz.stream_data_valid", "sdv", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_abz.state", "state", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_abz.st_state", "st_state", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_abz.fifo_elemcnt", "elemcnt", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_abz.enabled", "ena", NULL, FORM_DEC, WF_ALL);
+#if 0
+	watch_add(sp->wp, "u_abz.st_timer", "timer", NULL, FORM_DEC, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_abz.st_len", "len", NULL, FORM_DEC, WF_ALL);
+
+
+	/* enable signal unit */
+	uart_send_vlq_and_wait(sp, 3, CMD_CONFIG_ABZ, 1, 0xffffffff);
+
+	ether_t eth = { 0 };
+	eth.rx_clk = &tb->pmod2_2;
+	eth.tx_en = &tb->pmod2_1;
+	eth.tx0 = &tb->pmod1_4;
+	eth.tx1 = &tb->pmod1_3;
+
+	int len = get_packet(sp, &eth, buf, sizeof(buf) / sizeof(*buf));
+	int got_it = 0;
+	for (i = 0; i < len; ++i) {
+		uint32_t d = buf[i];
+		uint8_t type = d >> 24;
+
+		printf("type %d\n", type);
+		switch (type) {
+		case 0x08:
+		case 0x0a:
+		case 0xff:
+			break;
+		case 0x09:
+		case 0x0b:
+			if (i + 1 == len)
+				fail("incomplete mcu packet\n");
+			++i;
+			break;
+		case 0x30:
+			i += 2;
+			break;
+		case 0x40:
+			printf("received signal packet len %d\n", d & 0xff);
+			i += 1 + (d & 0xff);
+			break;
+		case 0x48:
+			printf("received abz packet len %d\n", d & 0xff);
+			i += 1 + (d & 0xff);
+			got_it = 1;
+			break;
+		default:
+			fail("unknown daq packet type %d at %d\n", type, i);
+			break;
+		}
+	}
+	if (!got_it)
+		fail("no abz packet in daq packet\n");
+
+	/* disable abz unit again */
+	uart_send_vlq_and_wait(sp, 3, CMD_CONFIG_ABZ, 0, 0);
+
+#if 0
+printf("sleeping\n"); sleep(1000);
+#endif
+
+	watch_clear(sp->wp);
+}
+
+static void
 as5311_tick(sim_t *sp)
 {
 	int i;
@@ -2959,18 +3080,22 @@ test(sim_t *sp)
 	test_time(sp);	/* always needed as time sync */
 	test_version(sp);
 	test_ether(sp);
-	test_biss(sp);
 #if 0
 	test_sd(sp);
 #endif
-#if 1
+#if 0
 	test_pwm(sp);
 	test_tmcuart(sp);
 	test_gpio(sp);
 #endif
+#if 1
 	test_signal(sp);
+#endif
+	test_drain(sp);
+	test_abz(sp);
 	test_dro(sp);
 	test_as5311(sp);
+	test_biss(sp);
 #if 1
 	/* must be last, as it ends with a shutdown */
 	test_stepper(sp);

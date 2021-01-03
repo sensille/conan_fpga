@@ -5,10 +5,11 @@ module signal #(
 	parameter HZ = 0,
 	parameter SIG_WIDTH = 18,
 	parameter CMD_BITS = 8,
-	parameter CMD_CONFIG_SIGNAL = 0,
+	parameter CMD_CONFIG = 0,
 	parameter SIG_WAIT_FRAC = 10,
 	parameter RLE_BITS = 20,
-	parameter FLUSH_FREQ = 100
+	parameter FLUSH_FREQ = 100,
+	parameter DAQT_DATA = 0
 ) (
 	input wire clk,
 	input wire [63:0] systime,
@@ -35,7 +36,6 @@ module signal #(
 
 /* XXX SIG_WIDTH currently must be <= 29 */
 
-localparam DAQT_SIGNAL_DATA	= 64;
 localparam DAQ_PACKET_SIZE	= 100;
 localparam DAQ_PACKET_BITS	= $clog2(DAQ_PACKET_SIZE);
 localparam NSLOTS		= 7;
@@ -174,11 +174,11 @@ end
 /*
  * RLE on slot
  */
-localparam PLEN_BITS = $clog2(SIG_WIDTH + 3);
 reg [RLE_BITS-1:0] slot_cnt;
 reg [SIG_WIDTH-1:0] deferred;
 reg first_loop = 1;
 localparam PD_BITS = (SIG_WIDTH + 3 > RLE_BITS + 6) ? SIG_WIDTH + 3 : RLE_BITS + 6;
+localparam PLEN_BITS = $clog2(PD_BITS);
 reg [PD_BITS-1:0] push_data;
 reg [PLEN_BITS-1:0] push_len = 0;
 reg [RLE_BITS-1:0] push_clks;
@@ -339,7 +339,7 @@ always @(posedge clk) begin
 		end
 	end else if (st_state == ST_WAIT_GRANT && daq_grant) begin
 		daq_req <= 0;
-		daq_data[31:24] <= DAQT_SIGNAL_DATA;
+		daq_data[31:24] <= DAQT_DATA;
 		daq_data[23:18] <= fifo_out[36:32];
 		daq_data[17:13] <= RLE_BITS;
 		daq_data[12:8] <= SIG_WIDTH;
@@ -384,7 +384,7 @@ always @(posedge clk) begin
 		cmd_done <= 0;
 
 	if (state == PS_IDLE && cmd_ready) begin
-		if (cmd == CMD_CONFIG_SIGNAL) begin
+		if (cmd == CMD_CONFIG) begin
 			enabled <= arg_data[0];
 			state <= PS_CONFIG_SIGNAL_1;
 		end else begin

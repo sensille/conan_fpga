@@ -22,6 +22,7 @@ module system #(
 	parameter NSD = 0,
 	parameter NETHER = 0,
 	parameter NBISS = 0,
+	parameter NABZ = 0,
 	parameter MISSED_BITS = 0
 ) (
 	input wire clk,
@@ -117,7 +118,8 @@ always @(posedge clk) begin
 	end else if (state == PS_GET_VERSION_3) begin
 		param_data[31:24] <= NDRO;
 		param_data[23:16] <= NBISS;
-		param_data[15:0] <= 0;
+		param_data[15:8] <= NABZ;
+		param_data[7:0] <= 0;
 		state <= PS_GET_VERSION_4;
 	end else if (state == PS_GET_VERSION_4) begin
 		param_data[31:16] <= 0;

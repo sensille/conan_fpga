@@ -16,6 +16,7 @@ module command #(
 	parameter NSD = 0,
 	parameter NETHER = 0,
 	parameter NBISS = 0,
+	parameter NABZ = 0,
 	parameter VERSION = 0,
 	parameter PACKET_WAIT_FRAC = 0,
 	parameter SIG_WIDTH = 0,
@@ -93,6 +94,10 @@ module command #(
 	output wire [NBISS-1:0] biss_mo,
 	input wire [NBISS-1:0] biss_mi,
 
+	input wire [NABZ-1:0] abz_a,
+	input wire [NABZ-1:0] abz_b,
+	input wire [NABZ-1:0] abz_z,
+
 	input wire [63:0] time_in,
 	output wire [63:0] time_out,
 	output wire time_out_en,
@@ -143,7 +148,8 @@ localparam UNIT_SD		= 4'd7;
 localparam UNIT_ETHER		= 4'd8;
 localparam UNIT_SIGNAL		= 4'd9;
 localparam UNIT_BISS		= 4'd10;
-localparam NUNITS		= 4'd11;
+localparam UNIT_ABZ		= 4'd11;
+localparam NUNITS		= 4'd12;
 
 localparam CMDTAB_SIZE = UNITS_BITS + ARGS_BITS + 2;
 localparam CMD_GET_VERSION		= 0;
@@ -177,7 +183,8 @@ localparam CMD_ETHER_SET_STATE		= 27;
 localparam CMD_CONFIG_SIGNAL		= 28;
 localparam CMD_CONFIG_BISS		= 29;
 localparam CMD_BISS_FRAME		= 30;
-localparam NCMDS			= 31;
+localparam CMD_CONFIG_ABZ		= 31;
+localparam NCMDS			= 32;
 localparam CMD_BITS = $clog2(NCMDS);
 
 localparam RSP_GET_VERSION	= 0;
@@ -245,6 +252,7 @@ initial begin
 	cmdtab[CMD_CONFIG_SIGNAL] = { UNIT_SIGNAL, ARGS_2, 1'b0, 1'b0 };
 	cmdtab[CMD_CONFIG_BISS] = { UNIT_BISS, ARGS_3, 1'b0, 1'b0 };
 	cmdtab[CMD_BISS_FRAME] = { UNIT_BISS, ARGS_3, 1'b0, 1'b1 };
+	cmdtab[CMD_CONFIG_ABZ] = { UNIT_ABZ, ARGS_2, 1'b0, 1'b0 };
 end
 
 /*
@@ -255,7 +263,8 @@ localparam DAQ_SYSTIME	= 1;
 localparam DAQ_AS5311	= 2;
 localparam DAQ_DRO	= 3;
 localparam DAQ_SIGNAL	= 4;
-localparam NDAQ		= 5;
+localparam DAQ_ABZ	= 5;
+localparam NDAQ		= 6;
 wire [31:0] daq_data[NDAQ];
 wire [NDAQ-1:0] daq_valid;
 wire [NDAQ-1:0] daq_end;
@@ -264,6 +273,8 @@ wire [NDAQ-1:0] daq_grant;
 /* 0-15 reserved for MCU */
 localparam DAQT_AS5311_DAT = 16;
 localparam DAQT_AS5311_MAG = 17;
+localparam DAQT_SIGNAL_DATA = 64;
+localparam DAQT_ABZ_DATA = 72;
 
 assign daq_data[DAQ_MCU] = mcu_daq_data;
 assign daq_valid[DAQ_MCU] = mcu_daq_valid;
@@ -685,11 +696,12 @@ ether #(
 signal #(
 	.HZ(HZ),
 	.SIG_WIDTH(SIG_WIDTH),
-	.CMD_CONFIG_SIGNAL(CMD_CONFIG_SIGNAL),
+	.CMD_CONFIG(CMD_CONFIG_SIGNAL),
 	.CMD_BITS(CMD_BITS),
 	.SIG_WAIT_FRAC(SIG_WAIT_FRAC),
 	.RLE_BITS(RLE_BITS),
-	.FLUSH_FREQ(FLUSH_FREQ)
+	.FLUSH_FREQ(FLUSH_FREQ),
+	.DAQT_DATA(DAQT_SIGNAL_DATA)
 ) u_signal (
 	.clk(clk),
 	.systime(systime),
@@ -739,6 +751,50 @@ biss #(
 	.biss_mi(biss_mi),
 
 	.debug()
+);
+
+/* XXX SIG_WIDTH currently must be <= 29 */
+localparam ABZ_WIDTH		= NABZ * 3;
+reg [ABZ_WIDTH-1:0] abz;
+integer si;
+always @(*) begin
+	for (si = 0; si < NABZ; si = si + 1) begin
+		abz[si * 3] = abz_a[si];
+		abz[si * 3 + 1] = abz_b[si];
+		abz[si * 3 + 2] = abz_z[si];
+	end
+end
+
+signal #(
+	.HZ(HZ),
+	.SIG_WIDTH(ABZ_WIDTH),
+	.CMD_CONFIG(CMD_CONFIG_ABZ),
+	.CMD_BITS(CMD_BITS),
+	.SIG_WAIT_FRAC(SIG_WAIT_FRAC),
+	.RLE_BITS(RLE_BITS),
+	.FLUSH_FREQ(FLUSH_FREQ),
+	.DAQT_DATA(DAQT_ABZ_DATA)
+) u_abz (
+	.clk(clk),
+	.systime(systime),
+
+	.arg_data(unit_arg_data),
+	.arg_advance(unit_arg_advance[UNIT_ABZ]),
+	.cmd(unit_cmd),
+	.cmd_ready(unit_cmd_ready[UNIT_ABZ]),
+	.cmd_done(unit_cmd_done[UNIT_ABZ]),
+	.param_data(unit_param_data[UNIT_ABZ]),
+	.param_write(unit_param_write[UNIT_ABZ]),
+	.invol_req(unit_invol_req[UNIT_ABZ]),
+	.invol_grant(unit_invol_grant[UNIT_ABZ]),
+
+	.daq_data(daq_data[DAQ_ABZ]),
+	.daq_valid(daq_valid[DAQ_ABZ]),
+	.daq_end(daq_end[DAQ_ABZ]),
+	.daq_req(daq_req[DAQ_ABZ]),
+	.daq_grant(daq_grant[DAQ_ABZ]),
+
+	.signal(abz)
 );
 
 localparam MST_IDLE = 0;

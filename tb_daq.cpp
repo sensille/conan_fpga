@@ -1030,39 +1030,6 @@ test_signal(sim_t *sp)
 	if (!tb->s_cmd_done)
 		fail("signal did not acknowldge enable command\n");
 
-#if 0
-	/* test short stimulus with timeout */
-	uint32_t buf[] = {
-		0x00,
-		0x01,
-		0x01,
-		0x01,
-		0x01,
-		0x01,
-		0x01,
-		0x01,
-		0x01,
-		0x01,
-		0x02,
-		0x03,
-		0x04,
-		0x05,
-		0x06,
-		0x07,
-		0x08,
-		0x07,
-		0x08,
-		0x04,
-		0x07,
-		0x01,
-		0x02,
-		0x02,
-		0x01,
-	};
-
-	send_and_test_stimulus(sp, buf, sizeof(buf) / sizeof(*buf));
-#endif
-
 	/* large stimulus with back-to-back packets, timeout for last packet */
 	int stimulus_size = 100000;
 	uint32_t *stimulus = (uint32_t *)malloc(sizeof(*stimulus) * stimulus_size);
@@ -1113,8 +1080,9 @@ test(sim_t *sp)
 {
 	delay(sp, 1);	/* pass back control after initialization */
 
-#if 0
 	test_daq(sp);
+#if 0
+	test_abz(sp);
 #endif
 	test_signal(sp);
 
