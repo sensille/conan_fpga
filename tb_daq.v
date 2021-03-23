@@ -78,6 +78,7 @@ daq #(
 	.debug()
 );
 
+reg [15:0] ether_type = 16'h5139;
 reg [47:0] src_mac = 48'h123456789abc;
 reg [47:0] dst_mac = 48'h665544332211;
 mac #(
@@ -101,6 +102,7 @@ mac #(
 	.daqo_len_ready(daqo_len_ready),
 	.daqo_len_rd_en(daqo_len_rd_en),
 
+	.ether_type(ether_type),
 	.src_mac(src_mac),
 	.dst_mac(dst_mac),
 

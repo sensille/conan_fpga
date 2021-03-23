@@ -2993,7 +2993,7 @@ test_ether(sim_t *sp)
 	if (rsp[2] != 0x1234)
 		fail("ether read bad register content %x\n", rsp[2]);
 
-	uart_send_vlq_and_wait(sp, 5, CMD_CONFIG_ETHER, 0, 0x12345678, 0x9abc6655, 0x44332211);
+	uart_send_vlq_and_wait(sp, 6, CMD_CONFIG_ETHER, 0, 0x12345678, 0x9abc6655, 0x44332211, 0x5139);
 	delay(sp, 1000);
 	/* check mac addresses */
 	printf("src_mac %llx\n", tb->conan__DOT__u_command__DOT__u_ether__DOT__src_mac);

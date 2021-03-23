@@ -49,6 +49,7 @@ module ether #(
 	input wire shutdown	/* not used */
 );
 
+reg [15:0] ether_type = 16'hffff;
 reg [47:0] src_mac = 48'hffffffffffff;
 reg [47:0] dst_mac = 48'hffffffffffff;
 localparam ES_QUEUE	= 0;
@@ -80,6 +81,7 @@ mac #(
 	.daqo_len_ready(daqo_len_ready),
 	.daqo_len_rd_en(daqo_len_rd_en),
 
+	.ether_type(ether_type),
 	.src_mac(src_mac),
 	.dst_mac(dst_mac),
 
@@ -109,19 +111,20 @@ localparam PS_IDLE			= 0;
 localparam PS_CONFIG_ETHER_1		= 1;
 localparam PS_CONFIG_ETHER_2		= 2;
 localparam PS_CONFIG_ETHER_3		= 3;
-localparam PS_ETHER_MD_1		= 4;
-localparam PS_ETHER_MD_2		= 5;
-localparam PS_ETHER_MD_3		= 6;
-localparam PS_ETHER_MD_4		= 7;
-localparam PS_ETHER_MD_READING		= 8;
-localparam PS_ETHER_MD_PREAMBLE		= 9;
-localparam PS_ETHER_MD_FRAME		= 10;
-localparam PS_ETHER_MD_DONE		= 11;
-localparam PS_ETHER_MD_RESPOND		= 12;
-localparam PS_ETHER_MD_RESPOND_1	= 13;
-localparam PS_ETHER_MD_RESPOND_2	= 14;
-localparam PS_ETHER_SET_STATE_1		= 15;
-localparam PS_MAX			= 15;
+localparam PS_CONFIG_ETHER_4		= 4;
+localparam PS_ETHER_MD_1		= 5;
+localparam PS_ETHER_MD_2		= 6;
+localparam PS_ETHER_MD_3		= 7;
+localparam PS_ETHER_MD_4		= 8;
+localparam PS_ETHER_MD_READING		= 9;
+localparam PS_ETHER_MD_PREAMBLE		= 10;
+localparam PS_ETHER_MD_FRAME		= 11;
+localparam PS_ETHER_MD_DONE		= 12;
+localparam PS_ETHER_MD_RESPOND		= 13;
+localparam PS_ETHER_MD_RESPOND_1	= 14;
+localparam PS_ETHER_MD_RESPOND_2	= 15;
+localparam PS_ETHER_SET_STATE_1		= 16;
+localparam PS_MAX			= 16;
 localparam PS_BITS = $clog2(PS_MAX + 1);
 reg [PS_BITS-1:0] state = PS_IDLE;
 
@@ -169,6 +172,9 @@ always @(posedge clk) begin
 		state <= PS_CONFIG_ETHER_3;
 	end else if (state == PS_CONFIG_ETHER_3) begin
 		dst_mac[31:0] <= arg_data;
+		state <= PS_CONFIG_ETHER_4;
+	end else if (state == PS_CONFIG_ETHER_4) begin
+		ether_type <= arg_data[15:0];
 		cmd_done <= 1;
 		state <= PS_IDLE;
 	end else if (state == PS_ETHER_MD_1) begin

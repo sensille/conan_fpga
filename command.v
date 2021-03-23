@@ -245,7 +245,7 @@ initial begin
 	cmdtab[CMD_CONFIG_DRO] = { UNIT_DRO, ARGS_3, 1'b0, 1'b0 };
 	cmdtab[CMD_CONFIG_AS5311] = { UNIT_AS5311, ARGS_5, 1'b0, 1'b0 };
 	cmdtab[CMD_SD_QUEUE] = { UNIT_SD, ARGS_2, 1'b1, 1'b0 };
-	cmdtab[CMD_CONFIG_ETHER] = { UNIT_ETHER, ARGS_4, 1'b0, 1'b0 };
+	cmdtab[CMD_CONFIG_ETHER] = { UNIT_ETHER, ARGS_5, 1'b0, 1'b0 };
 	cmdtab[CMD_ETHER_MD_READ] = { UNIT_ETHER, ARGS_3, 1'b0, 1'b1 };
 	cmdtab[CMD_ETHER_MD_WRITE] = { UNIT_ETHER, ARGS_4, 1'b0, 1'b0 };
 	cmdtab[CMD_ETHER_SET_STATE] = { UNIT_ETHER, ARGS_2, 1'b0, 1'b0 };

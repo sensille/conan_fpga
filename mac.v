@@ -22,6 +22,7 @@ module mac #(
 	input wire daqo_len_ready,
 	output reg daqo_len_rd_en = 0,
 
+	input wire [15:0] ether_type,
 	input wire [47:0] src_mac,
 	input wire [47:0] dst_mac,
 
@@ -197,7 +198,7 @@ always @(posedge rx_clk) begin
 		crc_data_ready <= 1;
 		state <= MS_ETHERTYPE;
 	end else if (state == MS_ETHERTYPE && next_data_wanted) begin
-		next_data <= { 32'h5139, ether_seq };
+		next_data <= { ether_type, ether_seq };
 		ether_seq <= ether_seq + 1;
 		crc_data_ready <= 1;
 		state <= MS_PAYLOAD;
