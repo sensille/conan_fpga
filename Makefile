@@ -28,8 +28,9 @@ test: v
 v1: vrun_daq
 v2: vrun
 
+VWARN=-Wall -Wno-CASEINCOMPLETE -Wno-CASEOVERLAP
 obj_dir/$(TARGET).mk: $(SRC) Makefile
-	verilator -GPACKET_WAIT_FRAC=100 -GSIG_WAIT_FRAC=1000 -GRLE_BITS=12 --public -Wall -CFLAGS -g --exe --cc $(TARGET).v verilator.vlt tb.cpp
+	verilator $(VWARN) -GPACKET_WAIT_FRAC=100 -GSIG_WAIT_FRAC=1000 -GRLE_BITS=12 --public -CFLAGS -g --exe -CFLAGS -Wno-invalid-offsetof --cc $(TARGET).v verilator.vlt tb.cpp
 
 obj_dir/V$(TARGET)__ALL.a: obj_dir/$(TARGET).mk
 	make -j 4 -C obj_dir -f V$(TARGET).mk V$(TARGET)__ALL.a
@@ -43,7 +44,7 @@ obj_dir/V$(TARGET): obj_dir/vsyms.h
 
 # daq testbench
 obj_dir_daq/tb_daq.mk: $(DAQ_SRC) Makefile
-	verilator --public -Wall -Mdir obj_dir_daq -CFLAGS -g --exe --cc tb_daq.v verilator.vlt tb_daq.cpp
+	verilator $(VWARN) --public -Mdir obj_dir_daq -CFLAGS -g --exe -CFLAGS -Wno-invalid-offsetof --cc tb_daq.v verilator.vlt tb_daq.cpp
 
 obj_dir_daq/Vtb_daq__ALL.a: obj_dir_daq/tb_daq.mk
 	make -j 4 -C obj_dir_daq -f Vtb_daq.mk Vtb_daq__ALL.a

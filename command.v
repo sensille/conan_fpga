@@ -308,7 +308,7 @@ pwm #(
 	.CMD_SCHEDULE_PWM(CMD_SCHEDULE_PWM)
 ) u_pwm (
 	.clk(clk),
-	.systime(systime[31:0]),
+	.systime(systime),
 
 	.arg_data(unit_arg_data),
 	.arg_advance(unit_arg_advance[UNIT_PWM]),
@@ -327,6 +327,10 @@ pwm #(
 	.shutdown(shutdown),
 
 	.missed_clock(missed_clock[MISSED_PWM])
+
+/*
+	, .rst(1'b0)
+*/
 );
 
 wire [$clog2(NSTEPDIR):0] step_queue_overflow;

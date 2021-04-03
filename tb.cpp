@@ -1102,12 +1102,15 @@ test_pwm(sim_t *sp)
 	int i;
 
 	watch_add(sp->wp, "pwm1$", "p1", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_pwm.fsm_state", "fsm", NULL, FORM_DEC, WF_ALL);
+#if 0
 	watch_add(sp->wp, "u_pwm.on_ticks$", "on", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_pwm.off_ticks$", "off", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_pwm.next_on_ticks$", "n_on", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_pwm.next_off_ticks$", "n_off", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_pwm.scheduled$", "sched", NULL, FORM_BIN, WF_ALL);
 	watch_add(sp->wp, "u_pwm.next_time$", "next", NULL, FORM_DEC, WF_ALL);
+#endif
 #if 0
 	watch_add(sp->wp, "u_pwm.toggle_cnt$", "tcnt", NULL, FORM_DEC, WF_ALL);
 #endif
@@ -1533,6 +1536,8 @@ tmcuart_init(sim_t *sp, vluint8_t *in, vluint8_t *out, const char *name)
 
 	tu->regs[IFCNT] = 0;
 	tu->regs[IOIN] = 0x21000000;	/* version */
+
+	return tu;
 }
 
 static void
@@ -3083,23 +3088,17 @@ test(sim_t *sp)
 #if 0
 	test_sd(sp);
 #endif
-#if 0
 	test_pwm(sp);
-	test_tmcuart(sp);
 	test_gpio(sp);
-#endif
-#if 1
+	test_tmcuart(sp);
 	test_signal(sp);
-#endif
 	test_drain(sp);
 	test_abz(sp);
 	test_dro(sp);
 	test_as5311(sp);
 	test_biss(sp);
-#if 1
 	/* must be last, as it ends with a shutdown */
 	test_stepper(sp);
-#endif
 
 	printf("test succeeded after %d cycles\n", sp->cycle);
 

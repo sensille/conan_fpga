@@ -9,11 +9,11 @@ class CmdBusLayout(Layout):
             # master -> device
             ("arg_data", unsigned(32), DIR_FANOUT),
             ("arg_advance", unsigned(1), DIR_NONE), # TODO
-            ("cmd", unsigned(8), DIR_FANOUT),
+            ("cmd", unsigned(5), DIR_FANOUT),       # TODO
             ("cmd_ready", unsigned(1), DIR_NONE),
             ("cmd_done", unsigned(1), DIR_FANIN),
             # device -> master
-            ("param_data", unsigned(32), DIR_FANIN),
+            ("param_data", unsigned(33), DIR_FANIN),
             ("param_write", unsigned(1), DIR_FANIN),
             # async data device -> master
             ("invol_req", unsigned(1), DIR_NONE),
@@ -58,13 +58,15 @@ class CmdBusMaster(Elaboratable):
         return dev
 
     Command = namedtuple("commands",
-        ['dev', 'name', 'nargs', 'string_arg', 'response'])
+        ['dev', 'name', 'arg_names', 'nargs', 'string_arg', 'response'])
 
-    def define_cmd(self, dev, name, nargs=0, string_arg=False, response=True):
+    def define_cmd(self, dev, name, arg_names, nargs=0,
+                   string_arg=False, response=True):
         num = self.next_cmd
         self.next_cmd = self.next_cmd + 1
         print("define %s to %d" % (name, num))
-        self.cmds[num] = self.Command(dev, name, nargs, string_arg, response)
+        self.cmds[num] = self.Command(dev, name, arg_names,
+                                      len(arg_names), string_arg, response)
         self.cmds_by_name[name] = num
         return num
 
@@ -93,8 +95,9 @@ class CmdBusMaster(Elaboratable):
     def sim_drive_systime(self, sim):
         def proc():
             yield Passive()
+            systime = 681556699
             while (True):
-                systime = yield self.master.systime
+                systime = systime + 1
                 yield self.master.systime.eq(systime + 1)
                 yield
         return proc
@@ -102,26 +105,30 @@ class CmdBusMaster(Elaboratable):
     def sim_add_background(self, sim):
         sim.add_sync_process(self.sim_drive_systime(sim))
 
-    def sim_write(self, cmd, args):
+    def sim_write(self, cmd, **args):
         num = self.cmds_by_name[cmd]
         c = self.cmds[num]
         unit = c.dev.unit
+        print(args)
         assert c.nargs == len(args)
 
         yield self.master.cmd.eq(num)
         yield self.cmd_ready[unit].eq(1)
-        yield self.master.arg_data.eq(args[0])
+        yield self.master.arg_data.eq(args[c.arg_names[0]])
         yield
         yield self.cmd_ready[unit].eq(0)
 
-        for arg in args[1:]:
+        for arg_name in c.arg_names[1:]:
             while ((yield self.arg_advance[unit]) == 0 and
                    (yield self.cmd_done[unit]) == 0):
                 yield
             if (yield self.cmd_done[unit] == 1):
                 break;
-            yield self.master.arg_data.eq(arg)
+            yield self.master.arg_data.eq(args[arg_name])
             yield
 
         while ((yield self.cmd_done[unit]) == 0):
             yield
+
+    def systime_sig(self):
+        return self.master.systime
