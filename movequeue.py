@@ -150,7 +150,21 @@ class MoveQueue(Elaboratable):
         #         free.push(elem)
         #         
 
-        # remark: # (*) lines can be moved up here
+        # remark: the lines below are moved here, but also left in their
+        # original place below, marked with (*)
+        m.d.comb += slots_w.addr.eq(w_elem)
+        m.d.comb += slots_w.data.eq(self.in_data)
+        m.d.comb += ptrs_w.addr.eq(tails_r.data)
+        m.d.comb += ptrs_w.data.eq(w_elem)
+        m.d.comb += tails_w.addr.eq(w_chan)
+        m.d.comb += tails_w.data.eq(w_elem)
+        m.d.comb += heads_r.addr.eq(n_r_chan)
+        m.d.comb += n_r_elem.eq(heads_r.data)
+        m.d.sync += r_elem.eq(n_r_elem)
+        m.d.comb += ptrs_r.addr.eq(n_r_elem)
+        m.d.comb += slots_r.addr.eq(n_r_elem)
+        m.d.comb += self.out_data.eq(slots_r.data)
+        m.d.comb += free_fifo.w_data.eq(r_elem)
 
         with m.If(phase == 0):
             #
@@ -163,20 +177,19 @@ class MoveQueue(Elaboratable):
 
                 # slot[elem] := data
                 # address and data already set up for slot
-                m.d.comb += slots_w.addr.eq(w_elem)       # (*)
-                m.d.comb += slots_w.data.eq(self.in_data) # (*)
+                #m.d.comb += slots_w.addr.eq(w_elem)       # (*)
+                #m.d.comb += slots_w.data.eq(self.in_data) # (*)
                 m.d.comb += slots_w.en.eq(1)
             
                 # ptrs[tail] := elem
                 m.d.comb += tails_r.addr.eq(w_chan)
-                #m.d.comb += tails_r.en.eq(1)
-                m.d.comb += ptrs_w.addr.eq(tails_r.data)  # (*)
-                m.d.comb += ptrs_w.data.eq(w_elem)        # (*)
+                #m.d.comb += ptrs_w.addr.eq(tails_r.data)  # (*)
+                #m.d.comb += ptrs_w.data.eq(w_elem)        # (*)
                 m.d.comb += ptrs_w.en.eq(1)
 
                 # tail := elem
-                m.d.comb += tails_w.addr.eq(w_chan)       # (*)
-                m.d.comb += tails_w.data.eq(w_elem)       # (*)
+                #m.d.comb += tails_w.addr.eq(w_chan)       # (*)
+                #m.d.comb += tails_w.data.eq(w_elem)       # (*)
                 m.d.comb += tails_w.en.eq(1)
 
                 # if (emtpy) head := elem
@@ -207,18 +220,15 @@ class MoveQueue(Elaboratable):
                 m.d.sync += r_chan.eq(n_r_chan)
 
                 # elem := head
-                m.d.comb += heads_r.addr.eq(n_r_chan)       # (*)
-                #m.d.comb += heads_r.en.eq(1)              # (*)
-                m.d.comb += n_r_elem.eq(heads_r.data)     # (*)
-                m.d.sync += r_elem.eq(n_r_elem)           # (*)
+                #m.d.comb += heads_r.addr.eq(n_r_chan)       # (*)
+                #m.d.comb += n_r_elem.eq(heads_r.data)     # (*)
+                #m.d.sync += r_elem.eq(n_r_elem)           # (*)
 
                 # trigger read of ptrs[elem]
-                m.d.comb += ptrs_r.addr.eq(n_r_elem)      # (*)
-                #m.d.comb += ptrs_r.en.eq(1)               # (*)
+                #m.d.comb += ptrs_r.addr.eq(n_r_elem)      # (*)
 
                 # trigger read of slot[elem]
-                m.d.comb += slots_r.addr.eq(n_r_elem)     # (*)
-                #m.d.comb += slots_r.en.eq(1)              # (*)
+                #m.d.comb += slots_r.addr.eq(n_r_elem)     # (*)
 
                 # active := true
                 m.d.sync += r_active.eq(1)
@@ -229,7 +239,7 @@ class MoveQueue(Elaboratable):
             #
             with m.If(r_active):
                 # out := slot[elem]
-                m.d.comb += self.out_data.eq(slots_r.data)  # (*)
+                #m.d.comb += self.out_data.eq(slots_r.data)  # (*)
                 m.d.comb += self.out_valid.eq(1 << r_chan)
 
                 # head := ptrs[elem]
@@ -239,12 +249,11 @@ class MoveQueue(Elaboratable):
 
                 # if (elem == tail) empty := true
                 m.d.comb += tails_r.addr.eq(r_chan)
-                #m.d.comb += tails_r.en.eq(1)              # (*)
                 with m.If(r_elem == tails_r.data):
                     m.d.sync += empty.eq(empty | (1 << r_chan))
 
                 # free.push(elem)
-                m.d.comb += free_fifo.w_data.eq(r_elem)   # (*)
+                #m.d.comb += free_fifo.w_data.eq(r_elem)   # (*)
                 m.d.comb += free_fifo.w_en.eq(1)
                 # we could assert free_fifo.w_rdy == 1
 
