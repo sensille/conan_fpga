@@ -1,39 +1,34 @@
 #!/usr/bin/env python3
+
 from nmigen import *
 from nmigen.lib.fifo import SyncFIFOBuffered
-from nmigen.lib.scheduler import RoundRobin
 from random import randrange, seed
 
-#
-# taken from lib/scheduler and turned into an async version
-#
-class AsyncRoundRobin(Elaboratable):
-    def __init__(self, *, count):
-        if not isinstance(count, int) or count < 0:
-            raise ValueError("Count must be a non-negative integer, not {!r}"
-                             .format(count))
-        self.count    = count
-
-        self.requests   = Signal(count)
-        self.grant      = Signal(range(count))
-        self.prev_grant = Signal(range(count))
-        self.valid      = Signal()
+class Scheduler(Elaboratable):
+    def __init__(self, *, width):
+        self.width    = width
+        self.requests = Signal(width)
+        self.grant    = Signal(width)
+        self.grant_enc= Signal(range(width))
+        self.valid    = Signal()
+        self.capture  = Signal(width)
+        self.en       = Signal()
 
     def elaborate(self, platform):
         m = Module()
 
-        m.d.comb += self.grant.eq(self.prev_grant)
-        with m.Switch(self.prev_grant):
-            for i in range(self.count):
-                with m.Case(i):
-                    for pred in reversed(range(i)):
-                        with m.If(self.requests[pred]):
-                            m.d.comb += self.grant.eq(pred)
-                    for succ in reversed(range(i + 1, self.count)):
-                        with m.If(self.requests[succ]):
-                            m.d.comb += self.grant.eq(succ)
+        capture = Signal(self.width)
+        m.d.comb += capture.eq(self.capture)
+        with m.If(self.capture.any() == 0):
+            m.d.comb += capture.eq(self.requests)
 
-        m.d.comb += self.valid.eq(self.requests.any())
+        for i in range(self.width):
+            with m.If(capture & (1 << i)):
+                m.d.comb += self.grant.eq(1 << i)
+                m.d.comb += self.grant_enc.eq(i)
+                m.d.comb += self.valid.eq(1)
+                with m.If(self.en):
+                    m.d.sync += self.capture.eq(capture & ~(1 << i))
 
         return m
 
@@ -63,7 +58,7 @@ class MoveQueue(Elaboratable):
         self.out_valid = Signal(channels)
         self.out_req = Signal(channels)
 
-    def elaborate(self, platfrom):
+    def elaborate(self, platform):
         m = Module()
 
         entries = self.entries
@@ -107,15 +102,13 @@ class MoveQueue(Elaboratable):
         n_r_elem = Signal(entries_bits)
         r_elem = Signal(entries_bits)
 
-        w_sched = AsyncRoundRobin(count=channels)
+        w_sched = Scheduler(width=channels)
         m.submodules += w_sched
         m.d.comb += w_sched.requests.eq(self.in_req)
-        m.d.comb += w_sched.prev_grant.eq(w_chan)
 
-        r_sched = AsyncRoundRobin(count=channels)
+        r_sched = Scheduler(width=channels)
         m.submodules += r_sched
         m.d.comb += r_sched.requests.eq(self.out_req & ~empty)
-        m.d.comb += r_sched.prev_grant.eq(r_chan)
 
         phase = Signal()
         r_active = Signal()
@@ -127,7 +120,7 @@ class MoveQueue(Elaboratable):
         # writer phase one:
         #     if (free.rdy && req)
         #         elem := free.pop
-        #         slot[elem] := data
+        #         if (!empty) slot[elem] := data
         #         ptrs[tail] := elem
         #         tail := elem     -- write and write in the same cycle, port
         #                          -- must not be transparent
@@ -148,7 +141,7 @@ class MoveQueue(Elaboratable):
         #                            -- data from phase one here
         #         if (elem == tail) empty := true
         #         free.push(elem)
-        #         
+        #
 
         # remark: the lines below are moved here, but also left in their
         # original place below, marked with (*)
@@ -180,12 +173,13 @@ class MoveQueue(Elaboratable):
                 #m.d.comb += slots_w.addr.eq(w_elem)       # (*)
                 #m.d.comb += slots_w.data.eq(self.in_data) # (*)
                 m.d.comb += slots_w.en.eq(1)
-            
+
                 # ptrs[tail] := elem
                 m.d.comb += tails_r.addr.eq(w_chan)
                 #m.d.comb += ptrs_w.addr.eq(tails_r.data)  # (*)
                 #m.d.comb += ptrs_w.data.eq(w_elem)        # (*)
-                m.d.comb += ptrs_w.en.eq(1)
+                with m.If((empty & (1 << w_chan)) == 0):
+                    m.d.comb += ptrs_w.en.eq(1)
 
                 # tail := elem
                 #m.d.comb += tails_w.addr.eq(w_chan)       # (*)
@@ -207,28 +201,30 @@ class MoveQueue(Elaboratable):
             # write phase two
             #
             with m.If(free_fifo.r_rdy & w_sched.valid):
-                m.d.sync += w_chan.eq(w_sched.grant)
-                m.d.comb += self.in_ack.eq(1 << w_sched.grant)
+                m.d.sync += w_chan.eq(w_sched.grant_enc)
+                m.d.comb += self.in_ack.eq(w_sched.grant)
                 m.d.sync += w_active.eq(1)
+                m.d.comb += w_sched.en.eq(1)
 
         with m.If(phase == 0):
             #
             # reader phase one
             #
             with m.If(r_sched.valid):
-                m.d.comb += n_r_chan.eq(r_sched.grant)
+                m.d.comb += n_r_chan.eq(r_sched.grant_enc)
                 m.d.sync += r_chan.eq(n_r_chan)
+                m.d.comb += r_sched.en.eq(1)
 
                 # elem := head
-                #m.d.comb += heads_r.addr.eq(n_r_chan)       # (*)
-                #m.d.comb += n_r_elem.eq(heads_r.data)     # (*)
-                #m.d.sync += r_elem.eq(n_r_elem)           # (*)
+                #m.d.comb += heads_r.addr.eq(n_r_chan)      # (*)
+                #m.d.comb += n_r_elem.eq(heads_r.data)      # (*)
+                #m.d.sync += r_elem.eq(n_r_elem)            # (*)
 
                 # trigger read of ptrs[elem]
-                #m.d.comb += ptrs_r.addr.eq(n_r_elem)      # (*)
+                #m.d.comb += ptrs_r.addr.eq(n_r_elem)       # (*)
 
                 # trigger read of slot[elem]
-                #m.d.comb += slots_r.addr.eq(n_r_elem)     # (*)
+                #m.d.comb += slots_r.addr.eq(n_r_elem)      # (*)
 
                 # active := true
                 m.d.sync += r_active.eq(1)
@@ -253,31 +249,42 @@ class MoveQueue(Elaboratable):
                     m.d.sync += empty.eq(empty | (1 << r_chan))
 
                 # free.push(elem)
-                #m.d.comb += free_fifo.w_data.eq(r_elem)   # (*)
+                #m.d.comb += free_fifo.w_data.eq(r_elem)     # (*)
                 m.d.comb += free_fifo.w_en.eq(1)
                 # we could assert free_fifo.w_rdy == 1
 
                 m.d.sync += r_active.eq(0)
 
         m.d.sync += phase.eq(~phase)
+
+        # for invariant checker
+        #self.heads = heads
+        #self.tails = tails
+        #self.slots = slots
+        #self.fifo = free_fifo
+        #self.empty = empty
+        #self.ptrs = ptrs
+
         return m
 
 from nmigen.sim import *
 from nmigen.back import verilog
 
 if __name__ == "__main__":
-    channels = 6
+    channels = 30
+    entries_bits = 9
+    entries = 2 ** entries_bits
     seed(0)
-    mq = MoveQueue(width=72, entries_bits=9, channels=channels)
+    mq = MoveQueue(width=72, entries_bits=entries_bits, channels=channels)
 
     def fail(msg):
         print(msg)
-        exit(1)
+        raise("simulation abort")
 
     def wait_for_signal(sig, val):
         i = 0
         while ((yield sig) != val):
-            if i == 2000:
+            if i == 10000:
                 fail("signal never asserted")
             i = i + 1
             yield
@@ -306,7 +313,9 @@ if __name__ == "__main__":
                 yield
                 print("chan %d seq %x data %x" % (chan, seq, data))
                 delay = randrange(1, 2 * (n - seq))
+                #delay = randrange(1, 10)
                 yield from wait(delay)
+            print("producer %d done" % chan)
         return producer
 
     # one process per channel
@@ -328,8 +337,48 @@ if __name__ == "__main__":
                 yield out_req.eq(0)
                 yield
                 delay = randrange(1, 2 * n)
+                #delay = randrange(1, 20)
                 yield from wait(delay)
+            print("consumer %d done" % chan)
         return consumer
+
+    def invariant_checker():
+        yield Passive()
+        while (True):
+            if (yield mq.in_ack[4]) == 0 and (yield mq.out_valid[4]) == 0:
+                yield
+                continue
+            # check chain head->tail
+            # check slots in chain: correct channel, in seq
+            empty = yield mq.empty
+            visited = {}
+            #for ch in range(channels):
+            for ch in [4]:
+                if (empty & (1 << ch)):
+                    continue
+                p = yield mq.heads[ch]
+                seq = None
+                chain = []
+                while (p != (yield mq.tails[ch])):
+                    chain.append(p)
+                    if (p in visited):
+                        fail("node %d already visited (ch %d)" % (p, ch))
+                    visited[p] = 1
+                    s = yield mq.slots[p]
+                    if ((s >> 64) != ch):
+                        print(chain)
+                        fail("data for wrong channel in chain %d, slot %d/%x" %
+                            (ch, p, s))
+                    rs = (s >> 48) & 65535
+                    if (seq is not None):
+                        if (rs != seq + 1):
+                            print(chain)
+                            fail("data not in sequence (%d/%d) in chain %d, "
+                                "slot %d/%x" % (rs, seq + 1, ch, p, s))
+                    seq = rs
+                    p = yield mq.ptrs[p]
+                print("chain 4: %s" % chain)
+            yield
 
     sim = Simulator(mq)
     sim.add_clock(1e-6)
@@ -340,9 +389,10 @@ if __name__ == "__main__":
     for ch in range(channels):
         sim.add_sync_process(consumer_gen(mq.out_req[ch], mq.out_valid[ch],
             mq.out_data, ch, 750, 0))
+    sim.add_sync_process(invariant_checker)
 
-    with sim.write_vcd("movequeue.vcd"):
-        sim.run()
+    #with sim.write_vcd("movequeue.vcd"):
+    #    sim.run()
     with open("gen_movequeue.v", "w") as f:
         f.write(verilog.convert(mq, name='gen_movequeue', ports=[
             mq.in_data, mq.in_req, mq.in_ack,
