@@ -3,6 +3,7 @@
 from nmigen import *
 from nmigen.lib.fifo import SyncFIFOBuffered
 from random import randrange, seed
+from nmigen.hdl.rec import *
 
 class Scheduler(Elaboratable):
     def __init__(self, *, width):
@@ -32,42 +33,82 @@ class Scheduler(Elaboratable):
 
         return m
 
+class MoveQueueLayout(Layout):
+    def __init__(self, *, width, channels):
+        super().__init__([
+            #
+            # Input side ports
+            #
+            # writer has to hold req with all data 0 until ack goes high
+            # with ack high, it has to deassert req and output the date with
+            # the next clock for exactly one clock
+            #
+            # initiator -> movequeue
+            ("in_data", unsigned(width), DIR_FANIN),
+            ("in_req", unsigned(channels), DIR_NONE),
+            # movequeue -> initiator
+            ("in_ack", unsigned(channels), DIR_NONE),
+
+            #
+            # Output side ports
+            #
+            # requestor has to hold req until valid goes high
+            # with valid high, it has to latch the data with the next clock
+            # and deassert req
+            #
+            # receptor -> movequeue
+            ("out_req", unsigned(channels), DIR_NONE),
+            # movequeue -> receptor
+            ("out_data", unsigned(width), DIR_FANOUT),
+            ("out_valid", unsigned(channels), DIR_NONE),
+        ])
+
 class MoveQueue(Elaboratable):
-    def __init__(self, width=72, entries_bits=9, channels=32):
+    def __init__(self, width=72, entries_bits=9):
         # Config
         self.width = width
         self.entries_bits = entries_bits
         self.entries = 2 ** entries_bits
         self.channels = channels
+        self.clients = []
 
-        # Input side ports
-        #
-        # writer has to hold req with all data 0 until ack goes high
-        # with ack high, it has to deassert req and output the date with
-        # the next clock for exactly one clock
-        self.in_data = Signal(width)
-        self.in_req = Signal(channels)
-        self.in_ack = Signal(channels)
+    def register(self, *, channels=1):
+        bus = Record(MoveQueueLayout(width=self.width, channels=channels))
+        self.clients.append({ 'bus': bus, 'channels': channels })
 
-        # Output side ports
-        #
-        # requestor has to hold req until valid goes high
-        # with valid high, it has to latch the data with the next clock
-        # and deassert req
-        self.out_data = Signal(width)
-        self.out_valid = Signal(channels)
-        self.out_req = Signal(channels)
+        return bus
 
     def elaborate(self, platform):
         m = Module()
 
         entries = self.entries
         entries_bits = self.entries_bits
-        channels = self.channels
+        channels = sum(map(lambda x: x['channels'], self.clients))
+
+        #in_data = Signal(self.width)
+        #in_req = Signal(channels)
+        #in_ack = Signal(channels)
+
+        #out_data = Signal(self.width)
+        #out_valid = Signal(channels)
+        #out_req = Signal(channels)
+
+        bus = Record(MoveQueueLayout(width=self.width, channels=channels))
+        # stitch up busses
+        m.d.comb += bus.connect(*map(lambda x: x['bus'], self.clients),
+            exclude=['in_req', 'in_ack', 'out_req', 'out_valid'])
+        i = 0
+        for c in self.clients:
+            b = c['bus']
+            for j in range(c['channels']):
+                m.d.comb += bus.in_req[i].eq(b.in_req[j])
+                m.d.comb += bus.out_req[i].eq(b.out_req[j])
+                m.d.comb += b.in_ack[j].eq(bus.in_ack[i])
+                m.d.comb += b.out_valid[j].eq(bus.out_valid[i])
+                i = i + 1
 
         # State
-        slots = Memory(width=self.width, depth=entries,
-            init = [0xdeadbeef0000 + i for i in range(entries)])
+        slots = Memory(width=self.width, depth=entries)
         slots_r = slots.read_port()
         slots_w = slots.write_port()
         m.submodules += [ slots_r, slots_w]
@@ -104,11 +145,11 @@ class MoveQueue(Elaboratable):
 
         w_sched = Scheduler(width=channels)
         m.submodules += w_sched
-        m.d.comb += w_sched.requests.eq(self.in_req)
+        m.d.comb += w_sched.requests.eq(bus.in_req)
 
         r_sched = Scheduler(width=channels)
         m.submodules += r_sched
-        m.d.comb += r_sched.requests.eq(self.out_req & ~empty)
+        m.d.comb += r_sched.requests.eq(bus.out_req & ~empty)
 
         phase = Signal()
         r_active = Signal()
@@ -146,7 +187,7 @@ class MoveQueue(Elaboratable):
         # remark: the lines below are moved here, but also left in their
         # original place below, marked with (*)
         m.d.comb += slots_w.addr.eq(w_elem)
-        m.d.comb += slots_w.data.eq(self.in_data)
+        m.d.comb += slots_w.data.eq(bus.in_data)
         m.d.comb += ptrs_w.addr.eq(tails_r.data)
         m.d.comb += ptrs_w.data.eq(w_elem)
         m.d.comb += tails_w.addr.eq(w_chan)
@@ -156,7 +197,7 @@ class MoveQueue(Elaboratable):
         m.d.sync += r_elem.eq(n_r_elem)
         m.d.comb += ptrs_r.addr.eq(n_r_elem)
         m.d.comb += slots_r.addr.eq(n_r_elem)
-        m.d.comb += self.out_data.eq(slots_r.data)
+        m.d.comb += bus.out_data.eq(slots_r.data)
         m.d.comb += free_fifo.w_data.eq(r_elem)
 
         with m.If(phase == 0):
@@ -171,7 +212,7 @@ class MoveQueue(Elaboratable):
                 # slot[elem] := data
                 # address and data already set up for slot
                 #m.d.comb += slots_w.addr.eq(w_elem)       # (*)
-                #m.d.comb += slots_w.data.eq(self.in_data) # (*)
+                #m.d.comb += slots_w.data.eq(bus.in_data)  # (*)
                 m.d.comb += slots_w.en.eq(1)
 
                 # ptrs[tail] := elem
@@ -202,7 +243,7 @@ class MoveQueue(Elaboratable):
             #
             with m.If(free_fifo.r_rdy & w_sched.valid):
                 m.d.sync += w_chan.eq(w_sched.grant_enc)
-                m.d.comb += self.in_ack.eq(w_sched.grant)
+                m.d.comb += bus.in_ack.eq(w_sched.grant)
                 m.d.sync += w_active.eq(1)
                 m.d.comb += w_sched.en.eq(1)
 
@@ -235,8 +276,8 @@ class MoveQueue(Elaboratable):
             #
             with m.If(r_active):
                 # out := slot[elem]
-                #m.d.comb += self.out_data.eq(slots_r.data)  # (*)
-                m.d.comb += self.out_valid.eq(1 << r_chan)
+                #m.d.comb += bus.out_data.eq(slots_r.data)  # (*)
+                m.d.comb += bus.out_valid.eq(1 << r_chan)
 
                 # head := ptrs[elem]
                 m.d.comb += heads_w.addr.eq(r_chan)
@@ -264,6 +305,12 @@ class MoveQueue(Elaboratable):
         #self.fifo = free_fifo
         #self.empty = empty
         #self.ptrs = ptrs
+        #self.in_data = in_data
+        #self.in_req = in_req
+        #self.in_ack = in_ack
+        #self.out_data = out_data
+        #self.out_valid = out_valid
+        #self.out_req = out_req
 
         return m
 
@@ -275,7 +322,8 @@ if __name__ == "__main__":
     entries_bits = 9
     entries = 2 ** entries_bits
     seed(0)
-    mq = MoveQueue(width=72, entries_bits=entries_bits, channels=channels)
+    mq = MoveQueue(width=72, entries_bits=entries_bits)
+    bus = mq.register(channels=channels)
 
     def fail(msg):
         print(msg)
@@ -345,7 +393,7 @@ if __name__ == "__main__":
     def invariant_checker():
         yield Passive()
         while (True):
-            if (yield mq.in_ack[4]) == 0 and (yield mq.out_valid[4]) == 0:
+            if (yield bus.in_ack[4]) == 0 and (yield bus.out_valid[4]) == 0:
                 yield
                 continue
             # check chain head->tail
@@ -384,16 +432,16 @@ if __name__ == "__main__":
     sim.add_clock(1e-6)
     channels = 6
     for ch in range(channels):
-        sim.add_sync_process(producer_gen(mq.in_req[ch], mq.in_ack[ch],
-            mq.in_data, ch, 750))
+        sim.add_sync_process(producer_gen(bus.in_req[ch], bus.in_ack[ch],
+            bus.in_data, ch, 750))
     for ch in range(channels):
-        sim.add_sync_process(consumer_gen(mq.out_req[ch], mq.out_valid[ch],
-            mq.out_data, ch, 750, 0))
-    sim.add_sync_process(invariant_checker)
+        sim.add_sync_process(consumer_gen(bus.out_req[ch], bus.out_valid[ch],
+            bus.out_data, ch, 750, 0))
+    #sim.add_sync_process(invariant_checker)
 
-    #with sim.write_vcd("movequeue.vcd"):
-    #    sim.run()
+    with sim.write_vcd("movequeue.vcd"):
+        sim.run()
     with open("gen_movequeue.v", "w") as f:
         f.write(verilog.convert(mq, name='gen_movequeue', ports=[
-            mq.in_data, mq.in_req, mq.in_ack,
-            mq.out_data, mq.out_valid, mq.out_req]))
+            bus.in_data, bus.in_req, bus.in_ack,
+            bus.out_data, bus.out_valid, bus.out_req]))
