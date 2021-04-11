@@ -1102,8 +1102,8 @@ test_pwm(sim_t *sp)
 	int i;
 
 	watch_add(sp->wp, "pwm1$", "p1", NULL, FORM_BIN, WF_ALL);
-	watch_add(sp->wp, "u_pwm.fsm_state", "fsm", NULL, FORM_DEC, WF_ALL);
 #if 0
+	watch_add(sp->wp, "u_pwm.fsm_state", "fsm", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_pwm.on_ticks$", "on", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_pwm.off_ticks$", "off", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_pwm.next_on_ticks$", "n_on", NULL, FORM_DEC, WF_ALL);

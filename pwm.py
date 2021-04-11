@@ -1,8 +1,11 @@
+#!/usr/bin/env python3
+
 from nmigen import *
 from cmdbus import *
+from movequeue import *
 
 class PWM(Elaboratable):
-    def __init__(self, cmdbus, npwm=4, pwm_bits = 26):
+    def __init__(self, cmdbus, movequeue, npwm=4, pwm_bits = 26):
         # Config
         self.npwm = npwm
         self.pwm_bits = pwm_bits
@@ -20,6 +23,9 @@ class PWM(Elaboratable):
         self.CMD_SCHEDULE = device.define_cmd('CMD_SCHEDULE_PWM',
             ['channel', 'clock', 'on_ticks', 'off_ticks'])
 
+        if movequeue.width < 2 * pwm_bits + 32:
+            raise RuntimeError('movequeue not wide enough for PWM module')
+        self.mq = movequeue.register(channels=npwm)
 
     def elaborate(self, platfrom):
         m = Module()
@@ -27,19 +33,26 @@ class PWM(Elaboratable):
         pwm_bits = self.pwm_bits
         pwm = self.pwm
         cb = self.cmd
+        mq = self.mq
 
         # State
         on_ticks = Array([Signal(pwm_bits) for _ in range(npwm)])
         off_ticks = Array([Signal(pwm_bits, reset = 1) for _ in range(npwm)])
         next_on_ticks = Array([Signal(pwm_bits) for _ in range(npwm)])
         next_off_ticks = Array([Signal(pwm_bits) for _ in range(npwm)])
-        next_time = Array([Signal(32, name=f"next_time{i}") for i in range(npwm)])
-        scheduled = Array([Signal(1, name=f"scheduled{i}") for i in range(npwm)])
+        next_time = Array([Signal(32, name=f"next_time{i}")
+            for i in range(npwm)])
+        scheduled = Array([Signal(1, name=f"scheduled{i}")
+            for i in range(npwm)])
         default_value = Array([Signal(1) for _ in range(npwm)])
         max_duration = Array([Signal(32) for _ in range(npwm)])
         duration = Array([Signal(32, name=f"duration{i}") for i in range(npwm)])
         toggle_cnt = Array([Signal(pwm_bits, reset = 1) for _ in range(npwm)])
         channel = Signal(range(npwm))
+
+        next_time_in = Signal(32)
+        next_on_ticks_in = Signal(pwm_bits)
+        next_off_ticks_in = Signal(pwm_bits)
 
         m.d.comb += cb.arg_advance.eq(1)
         m.d.comb += cb.param_data.eq(0)
@@ -48,6 +61,16 @@ class PWM(Elaboratable):
 
         with m.If(cb.cmd_done == 1):
             m.d.sync += cb.cmd_done.eq(0)
+
+        for i in range(npwm):
+            with m.If(scheduled[i] == 0):
+                with m.If(mq.out_valid.bit_select(i, 1)):
+                    m.d.sync += mq.out_req.bit_select(i, 1).eq(0)
+                    m.d.sync += Cat(next_on_ticks[i], next_off_ticks[i],
+                        next_time[i]).eq(mq.out_data)
+                    m.d.sync += scheduled[i].eq(1)
+                with m.Else():
+                    m.d.sync += mq.out_req.bit_select(i, 1).eq(1)
 
         for i in range(npwm):
             with m.If(toggle_cnt[i] == 1):
@@ -67,15 +90,14 @@ class PWM(Elaboratable):
             with m.Else():
                 m.d.sync += toggle_cnt[i].eq(toggle_cnt[i] - 1)
 
-            with m.If(scheduled[i].bool() &
-                    (next_time[i] == cb.systime[:32])):
+            with m.If(scheduled[i] & (next_time[i] == cb.systime[:32])):
                 m.d.sync += [
                     on_ticks[i].eq(next_on_ticks[i]),
                     off_ticks[i].eq(next_off_ticks[i]),
                     duration[i].eq(max_duration[i]),
                     scheduled[i].eq(0),
                 ]
-            with m.Else():
+            with m.Elif(duration[i] != 0):
                 m.d.sync += duration[i].eq(duration[i] - 1)
 
         #
@@ -95,6 +117,7 @@ class PWM(Elaboratable):
         #
         # cmdbus state machine
         #
+        m.d.sync += mq.in_data.eq(0)
         with m.FSM():
             with m.State('IDLE'):
                 with m.If(cb.cmd_ready):
@@ -123,19 +146,26 @@ class PWM(Elaboratable):
                 m.d.sync += cb.cmd_done.eq(1)
                 m.next = 'IDLE'
             with m.State('SCHEDULE_1'):
-                m.d.sync += next_time[channel].eq(cb.arg_data)
-                with m.If (((cb.arg_data - cb.systime[:32]) >= 0xc0000000) |
-                           ((cb.arg_data - cb.systime[:32]) == 0x00000000)):
-                    m.d.sync += self.missed_clock.eq(1)
+                m.d.sync += next_time_in.eq(cb.arg_data)
+                #with m.If (((cb.arg_data - cb.systime[:32]) >= 0xc0000000) |
+                #           ((cb.arg_data - cb.systime[:32]) == 0x00000000)):
+                #    m.d.sync += self.missed_clock.eq(1)
                 m.next = 'SCHEDULE_2'
             with m.State('SCHEDULE_2'):
-                m.d.sync += next_on_ticks[channel].eq(cb.arg_data)
+                m.d.sync += next_on_ticks_in.eq(cb.arg_data)
                 m.next = 'SCHEDULE_3'
             with m.State('SCHEDULE_3'):
-                m.d.sync += next_off_ticks[channel].eq(cb.arg_data)
-                m.d.sync += scheduled[channel].eq(1)
+                m.d.sync += next_off_ticks_in.eq(cb.arg_data)
+                #m.d.sync += scheduled[channel].eq(1)
                 m.d.sync += cb.cmd_done.eq(1)
-                m.next = 'IDLE'
+                m.d.sync += mq.in_req.bit_select(channel, 1).eq(1)
+                m.next = 'SCHEDULE_4'
+            with m.State('SCHEDULE_4'):
+                with m.If(mq.in_ack.any()):
+                    m.d.sync += mq.in_data.eq(Cat(next_on_ticks_in,
+                        next_off_ticks_in, next_time_in))
+                    m.d.sync += mq.in_req.eq(0)
+                    m.next = 'IDLE'
 
         return m
 
@@ -143,14 +173,74 @@ from nmigen.sim import *
 from nmigen.back import verilog
 
 if __name__ == "__main__":
+    class Top(Elaboratable):
+        def __init__(self, mods=[], ports=[]):
+            self.mods = mods
+            self.ports = ports
+            for (port, name, dir) in ports:
+                setattr(self, port.name, port)
+        def elaborate(self, platform):
+            m = Module()
+            m.submodules += self.mods
+            return m
+
+    class PwmTop(Elaboratable):
+        def __init__(self, pwm, mq):
+            self.m_pwm = pwm
+            self.m_mq = mq
+
+            self.systime = Signal(64)
+            self.arg_data = Signal(32)
+            self.arg_advance = Signal()
+            self.cmd = Signal(pwm.cmd.cmd.shape())
+            self.cmd_ready = Signal()
+            self.cmd_done = Signal()
+            self.param_data = Signal(32)
+            self.param_write = Signal()
+            self.invol_req = Signal()
+            self.invol_grant = Signal()
+            self.pwm = Signal(pwm.npwm)
+            self.shutdown = Signal()
+            self.missed_clock = Signal()
+            
+        def elaborate(self, platform):
+            pwm = self.m_pwm
+            cmd = pwm.cmd
+
+            m = Module()
+            m.submodules += [self.m_pwm, self.m_mq]
+
+            m.d.comb += [
+                cmd.systime.eq(self.systime),
+                cmd.arg_data.eq(self.arg_data),
+                self.arg_advance.eq(cmd.arg_advance),
+                cmd.cmd.eq(self.cmd),
+                cmd.cmd_ready.eq(self.cmd_ready),
+                self.cmd_done.eq(cmd.cmd_done),
+                self.param_data.eq(cmd.param_data),
+                self.param_write.eq(cmd.param_write),
+                self.invol_req.eq(cmd.invol_req),
+                cmd.invol_grant.eq(self.invol_grant),
+                self.pwm.eq(pwm.pwm),
+                cmd.shutdown.eq(self.shutdown),
+                self.missed_clock.eq(pwm.missed_clock),
+            ]
+        
+            return m
+
     cmdbus = CmdBusMaster(first_cmd=3)
+    #mq = MoveQueue(width=72)
+    mq = MoveQueue(width=2 * 26 + 32)
     npwm = 12
-    pwm = PWM(cmdbus, npwm = npwm)
+    pwm = PWM(cmdbus, mq, npwm = npwm)
+    mq.configure()
     systime = cmdbus.systime_sig()
 
+    top = Top(mods=[cmdbus, mq])
+    pwmtop = PwmTop(pwm, mq)
+
     def fail(msg):
-        print(msg)
-        exit(1)
+        raise RuntimeError(msg)
 
     def wait_for_signal(sig, val):
         i = 0
@@ -169,7 +259,8 @@ if __name__ == "__main__":
         for i in range(3):
             curr = yield systime
             yield from wait_for_signal(pwm, 0)
-            print("c0: now is %d diff %d" % ((yield systime), (yield systime) - curr))
+            print("c0: now is %d diff %d" % ((yield systime),
+                (yield systime) - curr))
             if (yield systime) - curr != duty:
                 fail("pwm duty period mismatch, expected %d, got %d" %
                     (duty, (yield systime) - curr))
@@ -261,14 +352,30 @@ if __name__ == "__main__":
                 yield
             yield from test_pwm_check_cycle(systime, pwm.pwm[i], 22, 100);
 
-    sim = Simulator(cmdbus)
+    sim = Simulator(top)
     sim.add_clock(1e-6)
     sim.add_sync_process(sim_main)
     cmdbus.sim_add_background(sim)
 
+    with open("gen_pwm.v", "w") as f:
+        f.write(verilog.convert(pwmtop, name='gen_pwm', ports=[
+            pwmtop.systime,
+            pwmtop.arg_data,
+            pwmtop.arg_advance,
+            pwmtop.cmd,
+            pwmtop.cmd_ready,
+            pwmtop.cmd_done,
+            pwmtop.param_data,
+            pwmtop.param_write,
+            pwmtop.invol_req,
+            pwmtop.invol_grant,
+            pwmtop.pwm,
+            pwmtop.shutdown,
+            pwmtop.missed_clock,
+        ]))
+    #with open("gen_pwm.v", "w") as f:
+    #    ports = [pwm.pwm, pwm.missed_clock]
+    #    ports.extend(pwm.cmd.as_value().parts)
+    #    f.write(verilog.convert(pwm, name='gen_pwm', ports=ports))
     with sim.write_vcd("pwm.vcd"):
         sim.run()
-    with open("gen_pwm.v", "w") as f:
-        ports = [pwm.pwm, pwm.missed_clock]
-        ports.extend(pwm.cmd.as_value().parts)
-        f.write(verilog.convert(pwm, name='gen_pwm', ports=ports))

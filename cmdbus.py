@@ -23,15 +23,11 @@ class CmdBusLayout(Layout):
             ("shutdown", unsigned(1), DIR_FANOUT),
         ])
 
-class CmdBus(Record):
-    def __init__(self):
-        super().__init__(CmdBusLayout())
-
 class CmdBusDevice:
     def __init__(self, cmdbus, unit):
         self.cmdbus = cmdbus
         self.unit = unit
-        self.sigs = CmdBus()
+        self.sigs = Record(CmdBusLayout())
     def signals(self):
         return self.sigs
     def define_cmd(self, name, nargs=0, string_arg=False, response=True):
@@ -47,7 +43,7 @@ class CmdBusMaster(Elaboratable):
         self.cmds_by_name = {}
         self.signals = [None for _ in range(first_unit)]
         self.units = [None for _ in range(first_unit)]
-        self.master = CmdBus()
+        self.master = Record(CmdBusLayout())
 
     def register(self, m):
         dev = CmdBusDevice(self, self.next_unit)

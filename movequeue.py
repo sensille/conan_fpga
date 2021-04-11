@@ -69,8 +69,12 @@ class MoveQueue(Elaboratable):
         self.width = width
         self.entries_bits = entries_bits
         self.entries = 2 ** entries_bits
-        self.channels = channels
         self.clients = []
+
+    def configure(self):
+        # call after all modules have registered
+        channels = sum(map(lambda x: x['channels'], self.clients))
+        self.bus = Record(MoveQueueLayout(width=self.width, channels=channels))
 
     def register(self, *, channels=1):
         bus = Record(MoveQueueLayout(width=self.width, channels=channels))
@@ -85,15 +89,7 @@ class MoveQueue(Elaboratable):
         entries_bits = self.entries_bits
         channels = sum(map(lambda x: x['channels'], self.clients))
 
-        #in_data = Signal(self.width)
-        #in_req = Signal(channels)
-        #in_ack = Signal(channels)
-
-        #out_data = Signal(self.width)
-        #out_valid = Signal(channels)
-        #out_req = Signal(channels)
-
-        bus = Record(MoveQueueLayout(width=self.width, channels=channels))
+        bus = self.bus
         # stitch up busses
         m.d.comb += bus.connect(*map(lambda x: x['bus'], self.clients),
             exclude=['in_req', 'in_ack', 'out_req', 'out_valid'])
@@ -324,6 +320,7 @@ if __name__ == "__main__":
     seed(0)
     mq = MoveQueue(width=72, entries_bits=entries_bits)
     bus = mq.register(channels=channels)
+    mq.configure()
 
     def fail(msg):
         print(msg)
@@ -439,9 +436,9 @@ if __name__ == "__main__":
             bus.out_data, ch, 750, 0))
     #sim.add_sync_process(invariant_checker)
 
-    with sim.write_vcd("movequeue.vcd"):
-        sim.run()
+    #with sim.write_vcd("movequeue.vcd"):
+    #    sim.run()
     with open("gen_movequeue.v", "w") as f:
         f.write(verilog.convert(mq, name='gen_movequeue', ports=[
-            bus.in_data, bus.in_req, bus.in_ack,
-            bus.out_data, bus.out_valid, bus.out_req]))
+            mq.bus.in_data, mq.bus.in_req, mq.bus.in_ack,
+            mq.bus.out_data, mq.bus.out_valid, mq.bus.out_req]))

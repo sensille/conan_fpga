@@ -301,11 +301,13 @@ wire [32:0] unit_param_data [NUNITS];
 wire [NUNITS-1:0] unit_param_write;
 wire [NUNITS-1:0] unit_invol_req;
 reg [NUNITS-1:0] unit_invol_grant = 0;
-pwm #(
+gen_pwm #(
+/*
 	.NPWM(NPWM),
 	.CMD_BITS(CMD_BITS),
 	.CMD_CONFIG_PWM(CMD_CONFIG_PWM),
 	.CMD_SCHEDULE_PWM(CMD_SCHEDULE_PWM)
+*/
 ) u_pwm (
 	.clk(clk),
 	.systime(systime),
@@ -328,9 +330,7 @@ pwm #(
 
 	.missed_clock(missed_clock[MISSED_PWM])
 
-/*
 	, .rst(1'b0)
-*/
 );
 
 wire [$clog2(NSTEPDIR):0] step_queue_overflow;

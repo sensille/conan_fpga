@@ -5,7 +5,7 @@ all: $(TARGET).bit
 
 VINC=/usr/local/share/verilator/include
 
-SRC = led7219.v pll.v uart.v framing.v fifo.v command.v pwm.v system.v \
+SRC = led7219.v pll.v uart.v framing.v fifo.v command.v gen_pwm.v system.v \
        stepper.v stepdir.v tmcuart.v gpio.v dro.v as5311.v sd.v sdc.v \
        mac.v ether.v daq.v uartlog.v signal.v biss.v $(TARGET).v
 
@@ -28,7 +28,7 @@ test: v
 v1: vrun_daq
 v2: vrun
 
-VWARN=-Wall -Wno-CASEINCOMPLETE -Wno-CASEOVERLAP
+VWARN=-Wall -Wno-CASEINCOMPLETE -Wno-CASEOVERLAP -Wno-DECLFILENAME
 obj_dir/$(TARGET).mk: $(SRC) Makefile
 	verilator $(VWARN) -GPACKET_WAIT_FRAC=100 -GSIG_WAIT_FRAC=1000 -GRLE_BITS=12 --public -CFLAGS -g --exe -CFLAGS -Wno-invalid-offsetof --cc $(TARGET).v verilator.vlt tb.cpp
 
