@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 
 from nmigen import *
+from nmigen.lib.coding import Encoder
 from cmdbus import *
 from movequeue import *
+import math;
 
 class PWM(Elaboratable):
     def __init__(self, cmdbus, movequeue, npwm=4, pwm_bits = 26):
         # Config
         self.npwm = npwm
         self.pwm_bits = pwm_bits
+        self.npwm_bits = int(math.log(npwm, 2))
+
+        if (bin(npwm).count("1") != 1):
+            raise ValueError("npwm must be power of 2")
 
         # Ports
         self.pwm = Signal(npwm)
@@ -23,34 +29,186 @@ class PWM(Elaboratable):
         self.CMD_SCHEDULE = device.define_cmd('CMD_SCHEDULE_PWM',
             ['channel', 'clock', 'on_ticks', 'off_ticks'])
 
-        if movequeue.width < 2 * pwm_bits + 32:
+        if movequeue.width < 2 * pwm_bits + 32 - self.npwm_bits:
             raise RuntimeError('movequeue not wide enough for PWM module')
         self.mq = movequeue.register(channels=npwm)
 
     def elaborate(self, platfrom):
         m = Module()
         npwm = self.npwm
+        npwm_bits = self.npwm_bits
+        if (2 ** npwm_bits != npwm):
+            raise ValueError("math error with npwm_bits")
         pwm_bits = self.pwm_bits
         pwm = self.pwm
         cb = self.cmd
         mq = self.mq
+        upper = npwm_bits
+
+        class ConfLayout(Layout):
+            def __init__(self):
+                super().__init__([
+                    ("max_duration", unsigned(32 - upper)),
+                    ("default_value", unsigned(1)),
+                ])
+
+        class NextLayout(Layout):
+            def __init__(self):
+                super().__init__([
+                    ("on_ticks", unsigned(pwm_bits)),
+                    ("off_ticks", unsigned(pwm_bits)),
+# XXX no need to save lower bits
+                    ("time", unsigned(32 - upper)),
+                ])
+
+        class StateLayout(Layout):
+            def __init__(self):
+                super().__init__([
+                    ("on_ticks", unsigned(pwm_bits)),
+                    ("off_ticks", unsigned(pwm_bits)),
+                    ("toggle_at", unsigned(32)),
+                    ("duration", unsigned(32 - upper)),
+                    ("running", unsigned(1)),
+                ])
+
+        class ToggleLayout(Layout):
+            def __init__(self):
+                super().__init__([
+                    ("thresh", unsigned(upper)),
+                    ("en", unsigned(1)),
+                ])
+
+        # Config
+        # read in cycle loop, written from config
+        conf = Record(ConfLayout())
+        conf_mem = Memory(width=len(conf), depth=npwm)
+        conf_r = conf_mem.read_port(domain='comb')
+        conf_w = conf_mem.write_port()
+        m.submodules += [conf_r, conf_w]
+
+        # Next
+        # read in cycle loop, written from movequeue fetcher
+        next = Record(NextLayout())
+        next_mem = Memory(width=len(next), depth=npwm)
+        next_r = next_mem.read_port(domain='comb')
+        next_w = next_mem.write_port()
+        m.submodules += [next_r, next_w]
 
         # State
-        on_ticks = Array([Signal(pwm_bits) for _ in range(npwm)])
-        off_ticks = Array([Signal(pwm_bits, reset = 1) for _ in range(npwm)])
-        next_on_ticks = Array([Signal(pwm_bits) for _ in range(npwm)])
-        next_off_ticks = Array([Signal(pwm_bits) for _ in range(npwm)])
-        next_time = Array([Signal(32, name=f"next_time{i}")
-            for i in range(npwm)])
-        scheduled = Array([Signal(1, name=f"scheduled{i}")
-            for i in range(npwm)])
-        default_value = Array([Signal(1) for _ in range(npwm)])
-        max_duration = Array([Signal(32) for _ in range(npwm)])
-        duration = Array([Signal(32, name=f"duration{i}") for i in range(npwm)])
-        toggle_cnt = Array([Signal(pwm_bits, reset = 1) for _ in range(npwm)])
-        channel = Signal(range(npwm))
+        # read and updated in cycle loop
+        state = Record(StateLayout())
+        state_mem = Memory(width=len(state), depth=npwm)
+        state_r = state_mem.read_port(domain='comb')
+        state_w = state_mem.write_port()
+        m.submodules += [state_r, state_w]
 
-        next_time_in = Signal(32)
+        # one-shot: 
+        toggle = Record(ToggleLayout())
+        toggle_mem = Memory(width=len(toggle), depth=npwm)
+        toggle_r = []
+        toggle_w = toggle_mem.write_port()
+        m.submodules += toggle_w
+        for _ in range(self.npwm):
+            r = toggle_mem.read_port(domain='comb')
+            toggle_r.append(r)
+            m.submodules += r
+        for channel in range(npwm):
+            m.d.comb += toggle_r[channel].addr.eq(channel)
+
+
+        #
+        # Fetch updates from movequeue
+        #
+        out_req = Signal(npwm, reset = 2 ** npwm - 1)
+        m.d.comb += mq.out_req.eq(out_req)
+        valid_ch = Signal(npwm_bits)
+        valid_enc = Encoder(npwm_bits)
+        m.submodules += valid_enc
+        m.d.comb += valid_enc.i.eq(mq.out_valid)
+        m.d.comb += next_w.addr.eq(valid_enc.o)
+        m.d.comb += next_w.data.eq(mq.out_data)
+        with m.If(valid_enc.n):
+            m.d.comb += next_w.en.eq(1)
+            m.d.sync += out_req.bit_select(valid_enc.o, 1).eq(0)
+
+        #
+        # cycle through all channels, advancing one per clock
+        #
+        curr = Signal(range(self.npwm))
+        m.d.comb += curr.eq(systime[:upper])
+
+        state_next = Record(StateLayout())
+        m.d.comb += conf_r.addr.eq(curr)
+        m.d.comb += conf.eq(conf_r.data)
+        m.d.comb += next_r.addr.eq(curr)
+        m.d.comb += next.eq(next_r.data)
+        m.d.comb += state_r.addr.eq(curr)
+        m.d.comb += state_w.addr.eq(curr)
+        m.d.comb += state_w.en.eq(1)
+        m.d.comb += state.eq(state_r.data)
+        m.d.comb += state_w.data.eq(state_next)
+        m.d.comb += toggle_w.addr.eq(curr)
+        m.d.comb += toggle_w.data.eq(toggle)
+        m.d.comb += toggle_w.en.eq(1)
+        m.d.comb += state_next.eq(state)
+
+        pwm_next = Signal(pwm.shape())
+        m.d.comb += pwm_next.eq(pwm)
+
+        kick_machine = Signal()
+
+        base_toggle_at = Signal(state.toggle_at.shape())
+        m.d.comb += base_toggle_at.eq(state.toggle_at)
+
+        # check reload
+        with m.If((out_req.bit_select(curr, 1) == 0) &
+                  (next.time == systime[upper:32])):
+            m.d.comb += state_next.on_ticks.eq(next.on_ticks)
+            m.d.comb += state_next.off_ticks.eq(next.off_ticks)
+            m.d.comb += state_next.duration.eq(conf.max_duration)
+            with m.If(state.running == 0):
+                m.d.comb += state_next.running.eq(1)
+                m.d.comb += base_toggle_at.eq(systime[:32])
+                m.d.comb += kick_machine.eq(1)
+# XXX check on/off == 0, don't start maschine
+        # check max_duration expired
+        with m.Elif(state.duration == 0):
+            m.d.comb += state_next.running.eq(0)
+# XXX            #turn off pwm, set to default value
+            m.d.comb += toggle.en.eq(0)
+        with m.Else():
+            m.d.comb += state_next.duration.eq(state.duration - 1)
+
+        m.d.comb += toggle.thresh.eq(state.toggle_at[:upper])
+
+        # PWM running
+        lookahead = Signal()
+        with m.If(state.toggle_at[:upper] < curr):
+            m.d.comb += lookahead.eq(1)
+        with m.If(kick_machine | (state.running &
+                (state.toggle_at[upper:] == (systime[upper:32] + lookahead)))):
+            m.d.comb += toggle.en.eq(1)
+            # reload toggle_cnt to on_ticks/off_ticks
+            with m.If(pwm.bit_select(curr, 1)):
+                m.d.comb += state_next.toggle_at.eq(
+                    base_toggle_at + state_next.on_ticks)
+            with m.Else():
+                m.d.comb += state_next.toggle_at.eq(
+                    base_toggle_at + state_next.off_ticks)
+
+        #
+        # check all one-shot timers each cycle
+        #
+        for channel in range(self.npwm):
+            t = Record(ToggleLayout())
+            m.d.comb += t.eq(toggle_r[channel].data)
+            with m.If(t.en):
+                with m.If(t.thresh == systime[:upper]):
+                    m.d.comb += pwm_next[channel].eq(~pwm[channel])
+            
+        m.d.sync += pwm.eq(pwm_next)
+
+        next_time_in = Signal(32 - upper)
         next_on_ticks_in = Signal(pwm_bits)
         next_off_ticks_in = Signal(pwm_bits)
 
@@ -62,61 +220,14 @@ class PWM(Elaboratable):
         with m.If(cb.cmd_done == 1):
             m.d.sync += cb.cmd_done.eq(0)
 
-        for i in range(npwm):
-            with m.If(scheduled[i] == 0):
-                with m.If(mq.out_valid.bit_select(i, 1)):
-                    m.d.sync += mq.out_req.bit_select(i, 1).eq(0)
-                    m.d.sync += Cat(next_on_ticks[i], next_off_ticks[i],
-                        next_time[i]).eq(mq.out_data)
-                    m.d.sync += scheduled[i].eq(1)
-                with m.Else():
-                    m.d.sync += mq.out_req.bit_select(i, 1).eq(1)
-
-        for i in range(npwm):
-            with m.If(toggle_cnt[i] == 1):
-                with m.If(pwm[i] == 0):
-                    with m.If(on_ticks[i] != 0):
-                        m.d.sync += toggle_cnt[i].eq(on_ticks[i])
-                        m.d.sync += pwm[i].eq(1)
-                    with m.Else():
-                        m.d.sync += toggle_cnt[i].eq(off_ticks[i])
-                with m.Else():
-                    with m.If(off_ticks[i] != 0):
-                        with m.If(off_ticks[i] != 0):
-                            m.d.sync += toggle_cnt[i].eq(off_ticks[i])
-                            m.d.sync += pwm[i].eq(0)
-                    with m.Else():
-                        m.d.sync += toggle_cnt[i].eq(on_ticks[i])
-            with m.Else():
-                m.d.sync += toggle_cnt[i].eq(toggle_cnt[i] - 1)
-
-            with m.If(scheduled[i] & (next_time[i] == cb.systime[:32])):
-                m.d.sync += [
-                    on_ticks[i].eq(next_on_ticks[i]),
-                    off_ticks[i].eq(next_off_ticks[i]),
-                    duration[i].eq(max_duration[i]),
-                    scheduled[i].eq(0),
-                ]
-            with m.Elif(duration[i] != 0):
-                m.d.sync += duration[i].eq(duration[i] - 1)
-
-        #
-        # pwm duration safety feature. Must be before state
-        # machine because pwm_duration is set on load.
-        # duration = 0 turns this check off
-        #
-        for i in range(npwm):
-            with m.If(cb.shutdown.bool() | (duration[i] == 1)):
-                with m.If(default_value[i]):
-                    m.d.sync += on_ticks[i].eq(1),
-                    m.d.sync += off_ticks[i].eq(0),
-                with m.Else():
-                    m.d.sync += on_ticks[i].eq(0),
-                    m.d.sync += off_ticks[i].eq(1),
-
         #
         # cmdbus state machine
         #
+        channel = Signal(range(npwm))
+        conf_next = Record(ConfLayout())
+        m.d.comb += conf_w.addr.eq(channel)
+        m.d.comb += conf_w.data.eq(conf_next)
+        m.d.sync += conf_w.en.eq(0)
         m.d.sync += mq.in_data.eq(0)
         with m.FSM():
             with m.State('IDLE'):
@@ -131,22 +242,18 @@ class PWM(Elaboratable):
                         with m.Default():
                             m.d.sync += cb.cmd_done.eq(1)
             with m.State('CONFIG_1'):
-                with m.If(cb.arg_data[0]):
-                    m.d.sync += on_ticks[channel].eq(1)
-                    m.d.sync += off_ticks[channel].eq(0)
-                with m.Else():
-                    m.d.sync += on_ticks[channel].eq(0)
-                    m.d.sync += off_ticks[channel].eq(1)
+                m.d.sync += pwm.bit_select(channel, 1).eq(cb.arg_data[0])
                 m.next = 'CONFIG_2'
             with m.State('CONFIG_2'):
-                m.d.sync += default_value[channel].eq(cb.arg_data[0])
+                m.d.sync += conf_next.default_value.eq(cb.arg_data[0])
                 m.next = 'CONFIG_3'
             with m.State('CONFIG_3'):
-                m.d.sync += max_duration[channel].eq(cb.arg_data)
+                m.d.sync += conf_next.max_duration.eq(cb.arg_data[upper:])
+                m.d.sync += conf_w.en.eq(1)
                 m.d.sync += cb.cmd_done.eq(1)
                 m.next = 'IDLE'
             with m.State('SCHEDULE_1'):
-                m.d.sync += next_time_in.eq(cb.arg_data)
+                m.d.sync += next_time_in.eq(cb.arg_data[upper:])
                 #with m.If (((cb.arg_data - cb.systime[:32]) >= 0xc0000000) |
                 #           ((cb.arg_data - cb.systime[:32]) == 0x00000000)):
                 #    m.d.sync += self.missed_clock.eq(1)
@@ -231,7 +338,7 @@ if __name__ == "__main__":
     cmdbus = CmdBusMaster(first_cmd=3)
     #mq = MoveQueue(width=72)
     mq = MoveQueue(width=2 * 26 + 32)
-    npwm = 12
+    npwm = 16
     pwm = PWM(cmdbus, mq, npwm = npwm)
     mq.configure()
     systime = cmdbus.systime_sig()
@@ -289,14 +396,14 @@ if __name__ == "__main__":
 
             now = yield cmdbus.master.systime
             yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
-                channel = i, clock = now + 50, on_ticks = 10, off_ticks = 90)
+                channel = i, clock = now + 50, on_ticks = 20, off_ticks = 80)
 
-            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 10, 100);
+            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 20, 100);
 
             sched = (yield systime) + 400
             yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
                 channel = i, clock = sched, on_ticks = 55, off_ticks = 45)
-            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 10, 100);
+            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 20, 100);
             for _ in range(300):
                 yield
             yield from test_pwm_check_cycle(systime, pwm.pwm[i], 55, 100);
@@ -313,7 +420,7 @@ if __name__ == "__main__":
                 channel = i, clock = sched, on_ticks = 11, off_ticks = 89)
             for _ in range(300):
                 yield
-            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 11, 100);
+            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 21, 100);
 
             # test always on
             sched = (yield systime) + 300
