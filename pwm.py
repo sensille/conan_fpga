@@ -155,8 +155,6 @@ class PWM(Elaboratable):
         pwm_next = Signal(pwm.shape())
         m.d.comb += pwm_next.eq(pwm)
 
-        kick_machine = Signal()
-
         base_toggle_at = Signal(state.toggle_at.shape())
         m.d.comb += base_toggle_at.eq(state.toggle_at)
 
@@ -169,7 +167,6 @@ class PWM(Elaboratable):
             with m.If(state.running == 0):
                 m.d.comb += state_next.running.eq(1)
                 m.d.comb += base_toggle_at.eq(systime[:32])
-                m.d.comb += kick_machine.eq(1)
 # XXX check on/off == 0, don't start maschine
         # check max_duration expired
         with m.Elif(state.duration == 0):
@@ -183,10 +180,10 @@ class PWM(Elaboratable):
 
         # PWM running
         lookahead = Signal()
-        with m.If(state.toggle_at[:upper] < curr):
+        with m.If(base_toggle_at[:upper] <= curr):
             m.d.comb += lookahead.eq(1)
-        with m.If(kick_machine | (state.running &
-                (state.toggle_at[upper:] == (systime[upper:32] + lookahead)))):
+        with m.If(state_next.running &
+                (base_toggle_at[upper:] == (systime[upper:32] + lookahead))):
             m.d.comb += toggle.en.eq(1)
             # reload toggle_cnt to on_ticks/off_ticks
             with m.If(pwm.bit_select(curr, 1)):
