@@ -58,7 +58,7 @@ class PWM(Elaboratable):
                     ("on_ticks", unsigned(pwm_bits)),
                     ("off_ticks", unsigned(pwm_bits)),
 # XXX no need to save lower bits
-                    ("time", unsigned(32 - upper)),
+                    ("time", unsigned(32)),
                 ])
 
         class StateLayout(Layout):
@@ -127,7 +127,7 @@ class PWM(Elaboratable):
         m.d.comb += valid_enc.i.eq(mq.out_valid)
         m.d.comb += next_w.addr.eq(valid_enc.o)
         m.d.comb += next_w.data.eq(mq.out_data)
-        with m.If(valid_enc.n):
+        with m.If(~valid_enc.n):
             m.d.comb += next_w.en.eq(1)
             m.d.sync += out_req.bit_select(valid_enc.o, 1).eq(0)
 
@@ -159,39 +159,53 @@ class PWM(Elaboratable):
         m.d.comb += base_toggle_at.eq(state.toggle_at)
 
         # check reload
+        lookahead = Signal()
+        with m.If(next.time[:upper] <= curr):
+            m.d.comb += lookahead.eq(1)
         with m.If((out_req.bit_select(curr, 1) == 0) &
-                  (next.time == systime[upper:32])):
+                  (next.time[upper:] == systime[upper:32] + lookahead)):
             m.d.comb += state_next.on_ticks.eq(next.on_ticks)
             m.d.comb += state_next.off_ticks.eq(next.off_ticks)
             m.d.comb += state_next.duration.eq(conf.max_duration)
-            with m.If(state.running == 0):
+            m.d.sync += out_req.bit_select(curr, 1).eq(1)
+            with m.If(next.on_ticks == 0):
+                m.d.comb += state_next.running.eq(0)
+                with m.If(pwm_next.bit_select(curr, 1) == 0):
+                    m.d.comb += toggle.en.eq(1)
+#XXX can we just read PWM to determine if we have to toggle? or pwm_next?
+            with m.Elif(next.off_ticks == 0):
+                m.d.comb += state_next.running.eq(0)
+                with m.If(pwm_next.bit_select(curr, 1) == 1):
+                    m.d.comb += toggle.en.eq(1)
+            with m.Elif(state.running == 0):
                 m.d.comb += state_next.running.eq(1)
-                m.d.comb += base_toggle_at.eq(systime[:32])
+                m.d.comb += base_toggle_at.eq(next.time)
+                m.d.comb += state_next.toggle_at.eq(next.time)
 # XXX check on/off == 0, don't start maschine
         # check max_duration expired
-        with m.Elif(state.duration == 0):
+        with m.Elif(state.duration == 1):
+#            with m.If(state.running):
+            m.d.comb += pwm_next.bit_select(curr, 1).eq(conf.default_value)
             m.d.comb += state_next.running.eq(0)
-# XXX            #turn off pwm, set to default value
-            m.d.comb += toggle.en.eq(0)
         with m.Else():
             m.d.comb += state_next.duration.eq(state.duration - 1)
 
         m.d.comb += toggle.thresh.eq(state.toggle_at[:upper])
 
         # PWM running
-        lookahead = Signal()
+        lookahead2 = Signal()
         with m.If(base_toggle_at[:upper] <= curr):
-            m.d.comb += lookahead.eq(1)
+            m.d.comb += lookahead2.eq(1)
         with m.If(state_next.running &
-                (base_toggle_at[upper:] == (systime[upper:32] + lookahead))):
+                (base_toggle_at[upper:] == (systime[upper:32] + lookahead2))):
             m.d.comb += toggle.en.eq(1)
             # reload toggle_cnt to on_ticks/off_ticks
             with m.If(pwm.bit_select(curr, 1)):
                 m.d.comb += state_next.toggle_at.eq(
-                    base_toggle_at + state_next.on_ticks)
+                    base_toggle_at + state_next.off_ticks)
             with m.Else():
                 m.d.comb += state_next.toggle_at.eq(
-                    base_toggle_at + state_next.off_ticks)
+                    base_toggle_at + state_next.on_ticks)
 
         #
         # check all one-shot timers each cycle
@@ -205,7 +219,7 @@ class PWM(Elaboratable):
             
         m.d.sync += pwm.eq(pwm_next)
 
-        next_time_in = Signal(32 - upper)
+        next_time_in = Signal(32)
         next_on_ticks_in = Signal(pwm_bits)
         next_off_ticks_in = Signal(pwm_bits)
 
@@ -250,7 +264,7 @@ class PWM(Elaboratable):
                 m.d.sync += cb.cmd_done.eq(1)
                 m.next = 'IDLE'
             with m.State('SCHEDULE_1'):
-                m.d.sync += next_time_in.eq(cb.arg_data[upper:])
+                m.d.sync += next_time_in.eq(cb.arg_data)
                 #with m.If (((cb.arg_data - cb.systime[:32]) >= 0xc0000000) |
                 #           ((cb.arg_data - cb.systime[:32]) == 0x00000000)):
                 #    m.d.sync += self.missed_clock.eq(1)
@@ -261,10 +275,10 @@ class PWM(Elaboratable):
             with m.State('SCHEDULE_3'):
                 m.d.sync += next_off_ticks_in.eq(cb.arg_data)
                 #m.d.sync += scheduled[channel].eq(1)
-                m.d.sync += cb.cmd_done.eq(1)
                 m.d.sync += mq.in_req.bit_select(channel, 1).eq(1)
                 m.next = 'SCHEDULE_4'
             with m.State('SCHEDULE_4'):
+                m.d.sync += cb.cmd_done.eq(1)
                 with m.If(mq.in_ack.any()):
                     m.d.sync += mq.in_data.eq(Cat(next_on_ticks_in,
                         next_off_ticks_in, next_time_in))
@@ -395,15 +409,16 @@ if __name__ == "__main__":
             yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
                 channel = i, clock = now + 50, on_ticks = 20, off_ticks = 80)
 
-            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 20, 100);
+            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 20, 100)
 
             sched = (yield systime) + 400
+            print("writing second schedule at %d" % (yield systime))
             yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
                 channel = i, clock = sched, on_ticks = 55, off_ticks = 45)
-            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 20, 100);
+            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 20, 100)
             for _ in range(300):
                 yield
-            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 55, 100);
+            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 55, 100)
             for _ in range(500):
                 yield
             # wait until max duration (+one cycle) is over.
@@ -414,7 +429,7 @@ if __name__ == "__main__":
 
             sched = (yield systime) + 300
             yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
-                channel = i, clock = sched, on_ticks = 11, off_ticks = 89)
+                channel = i, clock = sched, on_ticks = 21, off_ticks = 79)
             for _ in range(300):
                 yield
             yield from test_pwm_check_cycle(systime, pwm.pwm[i], 21, 100);
