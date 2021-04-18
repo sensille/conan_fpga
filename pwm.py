@@ -68,6 +68,7 @@ class PWM(Elaboratable):
                     ("off_ticks", unsigned(pwm_bits)),
                     ("toggle_at", unsigned(32)),
                     ("duration", unsigned(32 - upper)),
+                    ("val", unsigned(1)),
                     ("running", unsigned(1)),
                 ])
 
@@ -75,6 +76,7 @@ class PWM(Elaboratable):
             def __init__(self):
                 super().__init__([
                     ("thresh", unsigned(upper)),
+                    ("val", unsigned(1)),
                     ("en", unsigned(1)),
                 ])
 
@@ -122,7 +124,7 @@ class PWM(Elaboratable):
         out_req = Signal(npwm, reset = 2 ** npwm - 1)
         m.d.comb += mq.out_req.eq(out_req)
         valid_ch = Signal(npwm_bits)
-        valid_enc = Encoder(npwm_bits)
+        valid_enc = Encoder(npwm)
         m.submodules += valid_enc
         m.d.comb += valid_enc.i.eq(mq.out_valid)
         m.d.comb += next_w.addr.eq(valid_enc.o)
@@ -170,27 +172,28 @@ class PWM(Elaboratable):
             m.d.sync += out_req.bit_select(curr, 1).eq(1)
             with m.If(next.on_ticks == 0):
                 m.d.comb += state_next.running.eq(0)
-                with m.If(pwm_next.bit_select(curr, 1) == 0):
-                    m.d.comb += toggle.en.eq(1)
-#XXX can we just read PWM to determine if we have to toggle? or pwm_next?
+                m.d.comb += toggle.en.eq(1)
+                m.d.comb += toggle.val.eq(0)
+                m.d.comb += base_toggle_at.eq(next.time)
             with m.Elif(next.off_ticks == 0):
                 m.d.comb += state_next.running.eq(0)
-                with m.If(pwm_next.bit_select(curr, 1) == 1):
-                    m.d.comb += toggle.en.eq(1)
+                m.d.comb += toggle.en.eq(1)
+                m.d.comb += toggle.val.eq(1)
+                m.d.comb += base_toggle_at.eq(next.time)
             with m.Elif(state.running == 0):
                 m.d.comb += state_next.running.eq(1)
+                # XXX
+                m.d.comb += state_next.val.eq(pwm.bit_select(curr, 1))
                 m.d.comb += base_toggle_at.eq(next.time)
                 m.d.comb += state_next.toggle_at.eq(next.time)
-# XXX check on/off == 0, don't start maschine
         # check max_duration expired
         with m.Elif(state.duration == 1):
-#            with m.If(state.running):
             m.d.comb += pwm_next.bit_select(curr, 1).eq(conf.default_value)
             m.d.comb += state_next.running.eq(0)
         with m.Else():
             m.d.comb += state_next.duration.eq(state.duration - 1)
 
-        m.d.comb += toggle.thresh.eq(state.toggle_at[:upper])
+        m.d.comb += toggle.thresh.eq(base_toggle_at[:upper])
 
         # PWM running
         lookahead2 = Signal()
@@ -200,7 +203,9 @@ class PWM(Elaboratable):
                 (base_toggle_at[upper:] == (systime[upper:32] + lookahead2))):
             m.d.comb += toggle.en.eq(1)
             # reload toggle_cnt to on_ticks/off_ticks
-            with m.If(pwm.bit_select(curr, 1)):
+            m.d.comb += state_next.val.eq(~state.val)
+            m.d.comb += toggle.val.eq(state_next.val)
+            with m.If(state.val):
                 m.d.comb += state_next.toggle_at.eq(
                     base_toggle_at + state_next.off_ticks)
             with m.Else():
@@ -215,7 +220,7 @@ class PWM(Elaboratable):
             m.d.comb += t.eq(toggle_r[channel].data)
             with m.If(t.en):
                 with m.If(t.thresh == systime[:upper]):
-                    m.d.comb += pwm_next[channel].eq(~pwm[channel])
+                    m.d.comb += pwm_next[channel].eq(t.val)
             
         m.d.sync += pwm.eq(pwm_next)
 
@@ -393,8 +398,8 @@ if __name__ == "__main__":
         for i in range(20):
             yield
 
-#        for i in range(npwm):
-        for i in range(2):
+        for i in range(npwm):
+#        for i in [4]:
             assert (yield pwm.pwm[i]) == 0
             # channel, value, default_value, max_duration
             yield from cmdbus.sim_write('CMD_CONFIG_PWM',
