@@ -8,7 +8,7 @@
 #include "verilated.h"
 #include "vsyms.h"
 
-static int color_disabled = 1;
+static int color_disabled = 0;
 
 #define CMD_GET_VERSION		0
 #define CMD_SYNC_TIME		1
@@ -1102,8 +1102,43 @@ test_pwm(sim_t *sp)
 	int i;
 
 	watch_add(sp->wp, "pwm1$", "p1", NULL, FORM_BIN, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.fsm_state", "fsm", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0241.bus___05Fout_req$", "bus_out_req", NULL, FORM_HEX, WF_ALL);
 #if 0
-	watch_add(sp->wp, "u_pwm.fsm_state", "fsm", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0241.bus___05Fin_ack$", "bus_in_ack", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0241.bus___05Fin_req$", "bus_in_req", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0241.bus___05Fin_data$", "bus_in_data", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0241.bus___05Fout_valid$", "bus_out_valid", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0241.bus___05Fout_data$", "bus_out_data", NULL, FORM_HEX, WF_ALL);
+#endif
+	watch_add(sp->wp, "u_pwm.U__024__0240.state___05Frunning$", "st_run", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.state___05Fval$", "st_val", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.state___05Fduration$", "st_duration", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.state___05Foff_ticks$", "st_off", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.state___05Fon_ticks$", "st_on", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.state___05Ftoggle_at$", "st_tat", NULL, FORM_HEX, WF_ALL);
+
+	watch_add(sp->wp, "u_pwm.U__024__0240.next___05Foff_ticks$", "n_off", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.next___05Fon_ticks$", "n_on", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.next___05Ftime$", "n_time", NULL, FORM_DEC, WF_ALL);
+
+	watch_add(sp->wp, "u_pwm.U__024__0240.state_next___05Foff_ticks$", "s_off", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.state_next___05Fon_ticks$", "s_on", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.state_next___05Ftoggle_at$", "s_at", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.state_next___05Fduration$", "s_dur", NULL, FORM_DEC, WF_ALL);
+
+	watch_add(sp->wp, "u_pwm.U__024__0240.__024187$", "$187", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.__024189$", "$189", NULL, FORM_DEC, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0240.lookahead$", "la", NULL, FORM_DEC, WF_ALL);
+#if 0
+	watch_add(sp->wp, "u_pwm.systime$", "st", NULL, FORM_DEC, WF_ALL);
+#endif
+
+#if 0
+	watch_add(sp->wp, "u_pwm.U__024__0240", "all", NULL, FORM_HEX, WF_ALL);
+	watch_add(sp->wp, "u_pwm.U__024__0241", "mq", NULL, FORM_HEX, WF_ALL);
+#endif
+#if 0
 	watch_add(sp->wp, "u_pwm.on_ticks$", "on", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_pwm.off_ticks$", "off", NULL, FORM_DEC, WF_ALL);
 	watch_add(sp->wp, "u_pwm.next_on_ticks$", "n_on", NULL, FORM_DEC, WF_ALL);

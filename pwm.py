@@ -137,7 +137,7 @@ class PWM(Elaboratable):
         # cycle through all channels, advancing one per clock
         #
         curr = Signal(range(self.npwm))
-        m.d.comb += curr.eq(systime[:upper])
+        m.d.comb += curr.eq(cb.systime[:upper])
 
         state_next = Record(StateLayout())
         m.d.comb += conf_r.addr.eq(curr)
@@ -165,7 +165,7 @@ class PWM(Elaboratable):
         with m.If(next.time[:upper] <= curr):
             m.d.comb += lookahead.eq(1)
         with m.If((out_req.bit_select(curr, 1) == 0) &
-                  (next.time[upper:] == systime[upper:32] + lookahead)):
+                  (next.time[upper:] == cb.systime[upper:32] + lookahead)):
             m.d.comb += state_next.on_ticks.eq(next.on_ticks)
             m.d.comb += state_next.off_ticks.eq(next.off_ticks)
             m.d.comb += state_next.duration.eq(conf.max_duration)
@@ -190,7 +190,7 @@ class PWM(Elaboratable):
         with m.Elif(state.duration == 1):
             m.d.comb += pwm_next.bit_select(curr, 1).eq(conf.default_value)
             m.d.comb += state_next.running.eq(0)
-        with m.Else():
+        with m.Elif(state.duration):
             m.d.comb += state_next.duration.eq(state.duration - 1)
 
         m.d.comb += toggle.thresh.eq(base_toggle_at[:upper])
@@ -200,7 +200,7 @@ class PWM(Elaboratable):
         with m.If(base_toggle_at[:upper] <= curr):
             m.d.comb += lookahead2.eq(1)
         with m.If(state_next.running &
-                (base_toggle_at[upper:] == (systime[upper:32] + lookahead2))):
+                (base_toggle_at[upper:] == (cb.systime[upper:32] + lookahead2))):
             m.d.comb += toggle.en.eq(1)
             # reload toggle_cnt to on_ticks/off_ticks
             m.d.comb += state_next.val.eq(~state.val)
@@ -219,7 +219,7 @@ class PWM(Elaboratable):
             t = Record(ToggleLayout())
             m.d.comb += t.eq(toggle_r[channel].data)
             with m.If(t.en):
-                with m.If(t.thresh == systime[:upper]):
+                with m.If(t.thresh == cb.systime[:upper]):
                     m.d.comb += pwm_next[channel].eq(t.val)
             
         m.d.sync += pwm.eq(pwm_next)
@@ -292,21 +292,7 @@ class PWM(Elaboratable):
 
         return m
 
-from nmigen.sim import *
-from nmigen.back import verilog
-
-if __name__ == "__main__":
-    class Top(Elaboratable):
-        def __init__(self, mods=[], ports=[]):
-            self.mods = mods
-            self.ports = ports
-            for (port, name, dir) in ports:
-                setattr(self, port.name, port)
-        def elaborate(self, platform):
-            m = Module()
-            m.submodules += self.mods
-            return m
-
+def generate():
     class PwmTop(Elaboratable):
         def __init__(self, pwm, mq):
             self.m_pwm = pwm
@@ -318,7 +304,7 @@ if __name__ == "__main__":
             self.cmd = Signal(pwm.cmd.cmd.shape())
             self.cmd_ready = Signal()
             self.cmd_done = Signal()
-            self.param_data = Signal(32)
+            self.param_data = Signal(33)
             self.param_write = Signal()
             self.invol_req = Signal()
             self.invol_grant = Signal()
@@ -357,10 +343,47 @@ if __name__ == "__main__":
     npwm = 16
     pwm = PWM(cmdbus, mq, npwm = npwm)
     mq.configure()
+
+    pwmtop = PwmTop(pwm, mq)
+
+    with open("gen_pwm.v", "w") as f:
+        f.write(verilog.convert(pwmtop, name='gen_pwm', ports=[
+            pwmtop.systime,
+            pwmtop.arg_data,
+            pwmtop.arg_advance,
+            pwmtop.cmd,
+            pwmtop.cmd_ready,
+            pwmtop.cmd_done,
+            pwmtop.param_data,
+            pwmtop.param_write,
+            pwmtop.invol_req,
+            pwmtop.invol_grant,
+            pwmtop.pwm,
+            pwmtop.shutdown,
+            pwmtop.missed_clock,
+        ]))
+
+def simulate():
+    class Top(Elaboratable):
+        def __init__(self, mods=[], ports=[]):
+            self.mods = mods
+            self.ports = ports
+            for (port, name, dir) in ports:
+                setattr(self, port.name, port)
+        def elaborate(self, platform):
+            m = Module()
+            m.submodules += self.mods
+            return m
+
+    cmdbus = CmdBusMaster(first_cmd=3)
+    #mq = MoveQueue(width=72)
+    mq = MoveQueue(width=2 * 26 + 32)
+    npwm = 16
+    pwm = PWM(cmdbus, mq, npwm = npwm)
+    mq.configure()
     systime = cmdbus.systime_sig()
 
     top = Top(mods=[cmdbus, mq])
-    pwmtop = PwmTop(pwm, mq)
 
     def fail(msg):
         raise RuntimeError(msg)
@@ -374,12 +397,12 @@ if __name__ == "__main__":
             i = i + 1
             yield
 
-    def test_pwm_check_cycle(systime, pwm, duty, period):
+    def test_pwm_check_cycle(systime, pwm, duty, period, cycles=3):
         yield from wait_for_signal(pwm, 0)
         print("0: now is %d" % (yield systime))
         yield from wait_for_signal(pwm, 1)
         print("1: now is %d" % (yield systime))
-        for i in range(3):
+        for _ in range(cycles):
             curr = yield systime
             yield from wait_for_signal(pwm, 0)
             print("c0: now is %d diff %d" % ((yield systime),
@@ -476,30 +499,23 @@ if __name__ == "__main__":
                 yield
             yield from test_pwm_check_cycle(systime, pwm.pwm[i], 22, 100);
 
+            now = yield cmdbus.master.systime
+            yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
+                channel = i, clock = now + 50, on_ticks = 17, off_ticks = 32)
+
+            yield from test_pwm_check_cycle(systime, pwm.pwm[i], 17, 49, 16)
+
     sim = Simulator(top)
     sim.add_clock(1e-6)
     sim.add_sync_process(sim_main)
     cmdbus.sim_add_background(sim)
 
-    with open("gen_pwm.v", "w") as f:
-        f.write(verilog.convert(pwmtop, name='gen_pwm', ports=[
-            pwmtop.systime,
-            pwmtop.arg_data,
-            pwmtop.arg_advance,
-            pwmtop.cmd,
-            pwmtop.cmd_ready,
-            pwmtop.cmd_done,
-            pwmtop.param_data,
-            pwmtop.param_write,
-            pwmtop.invol_req,
-            pwmtop.invol_grant,
-            pwmtop.pwm,
-            pwmtop.shutdown,
-            pwmtop.missed_clock,
-        ]))
-    #with open("gen_pwm.v", "w") as f:
-    #    ports = [pwm.pwm, pwm.missed_clock]
-    #    ports.extend(pwm.cmd.as_value().parts)
-    #    f.write(verilog.convert(pwm, name='gen_pwm', ports=ports))
     with sim.write_vcd("pwm.vcd"):
         sim.run()
+
+from nmigen.sim import *
+from nmigen.back import verilog
+
+if __name__ == "__main__":
+    generate()
+    simulate()
