@@ -132,6 +132,12 @@ class PWM(Elaboratable):
         with m.If(~valid_enc.n):
             m.d.comb += next_w.en.eq(1)
             m.d.sync += out_req.bit_select(valid_enc.o, 1).eq(0)
+            # check timer too close
+            n = Record(NextLayout())
+            m.d.comb += n.eq(mq.out_data)
+            with m.If (((n.time - cb.systime[:32])[:32] >= 0xc0000000) |
+                       ((n.time - cb.systime[:32])[:32] == 0x00000000)):
+                m.d.sync += self.missed_clock.eq(1)
 
         #
         # cycle through all channels, advancing one per clock
