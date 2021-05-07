@@ -61,6 +61,7 @@ class MoveQueueLayout(Layout):
             # movequeue -> receptor
             ("out_data", unsigned(width), DIR_FANOUT),
             ("out_valid", unsigned(channels), DIR_NONE),
+            ("empty", unsigned(channels), DIR_NONE),
         ])
 
 class MoveQueue(Elaboratable):
@@ -89,10 +90,13 @@ class MoveQueue(Elaboratable):
         entries_bits = self.entries_bits
         channels = sum(map(lambda x: x['channels'], self.clients))
 
+        # whether the channel list is empty
+        empty = Signal(channels, reset=2 ** channels - 1)
+
         bus = self.bus
         # stitch up busses
         m.d.comb += bus.connect(*map(lambda x: x['bus'], self.clients),
-            exclude=['in_req', 'in_ack', 'out_req', 'out_valid'])
+            exclude=['in_req', 'in_ack', 'out_req', 'out_valid', 'empty'])
         i = 0
         for c in self.clients:
             b = c['bus']
@@ -101,6 +105,7 @@ class MoveQueue(Elaboratable):
                 m.d.comb += bus.out_req[i].eq(b.out_req[j])
                 m.d.comb += b.in_ack[j].eq(bus.in_ack[i])
                 m.d.comb += b.out_valid[j].eq(bus.out_valid[i])
+                m.d.comb += b.empty[j].eq(empty[i])
                 i = i + 1
 
         # State
@@ -128,9 +133,6 @@ class MoveQueue(Elaboratable):
         tails_r = tails.read_port(domain='comb')
         tails_w = tails.write_port()
         m.submodules += [ tails_r, tails_w ]
-
-        # whether the channel list is empty
-        empty = Signal(channels, reset=2 ** channels - 1)
 
         w_chan = Signal(range(channels))
         w_elem = Signal(entries_bits)

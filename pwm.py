@@ -23,13 +23,17 @@ class PWM(Elaboratable):
         device = cmdbus.register(self)
         self.cmd = device.signals()
 
-        # Register our command
-        self.CMD_CONFIG = device.define_cmd('CMD_CONFIG_PWM',
+        # Register our commands
+        self.CMD_CONFIG = device.define_cmd('CMD_CONFIG_DIGITAL_OUT',
             ['channel', 'value', 'default_value', 'max_duration'])
-        self.CMD_SCHEDULE = device.define_cmd('CMD_SCHEDULE_PWM',
-            ['channel', 'clock', 'on_ticks', 'off_ticks'])
+        self.CMD_SET = device.define_cmd('CMD_SET_DIGITAL_OUT',
+            ['channel', 'value'])
+        self.CMD_SET_CYCLE = device.define_cmd('CMD_SET_DIGITAL_OUT_PWM_CYCLE',
+            ['channel', 'cycle_ticks'])
+        self.CMD_QUEUE = device.define_cmd('CMD_QUEUE_DIGITAL_OUT',
+            ['channel', 'clock', 'on_ticks'])
 
-        if movequeue.width < 2 * pwm_bits + 32 - self.npwm_bits:
+        if movequeue.width < pwm_bits + 32 - self.npwm_bits:
             raise RuntimeError('movequeue not wide enough for PWM module')
         self.mq = movequeue.register(channels=npwm)
 
@@ -56,7 +60,6 @@ class PWM(Elaboratable):
             def __init__(self):
                 super().__init__([
                     ("on_ticks", unsigned(pwm_bits)),
-                    ("off_ticks", unsigned(pwm_bits)),
 # XXX no need to save lower bits
                     ("time", unsigned(32)),
                 ])
@@ -88,6 +91,14 @@ class PWM(Elaboratable):
         conf_w = conf_mem.write_port()
         m.submodules += [conf_r, conf_w]
 
+        # cycle_ticks
+        # read in cycle loop, written from config
+        cycle_ticks = Signal(pwm_bits)
+        cycle_ticks_mem = Memory(width=len(cycle_ticks), depth=npwm)
+        cycle_ticks_r = cycle_ticks_mem.read_port(domain='comb')
+        cycle_ticks_w = cycle_ticks_mem.write_port()
+        m.submodules += [cycle_ticks_r, cycle_ticks_w]
+
         # Next
         # read in cycle loop, written from movequeue fetcher
         next = Record(NextLayout())
@@ -104,7 +115,7 @@ class PWM(Elaboratable):
         state_w = state_mem.write_port()
         m.submodules += [state_r, state_w]
 
-        # one-shot: 
+        # one-shot:
         toggle = Record(ToggleLayout())
         toggle_mem = Memory(width=len(toggle), depth=npwm)
         toggle_r = []
@@ -148,6 +159,8 @@ class PWM(Elaboratable):
         state_next = Record(StateLayout())
         m.d.comb += conf_r.addr.eq(curr)
         m.d.comb += conf.eq(conf_r.data)
+        m.d.comb += cycle_ticks_r.addr.eq(curr)
+        m.d.comb += cycle_ticks.eq(cycle_ticks_r.data)
         m.d.comb += next_r.addr.eq(curr)
         m.d.comb += next.eq(next_r.data)
         m.d.comb += state_r.addr.eq(curr)
@@ -170,10 +183,13 @@ class PWM(Elaboratable):
         lookahead = Signal()
         with m.If(next.time[:upper] <= curr):
             m.d.comb += lookahead.eq(1)
-        with m.If((out_req.bit_select(curr, 1) == 0) &
+        with m.If(cb.shutdown):
+            m.d.comb += pwm_next.bit_select(curr, 1).eq(conf.default_value)
+            m.d.comb += state_next.running.eq(0)
+        with m.Elif((out_req.bit_select(curr, 1) == 0) &
                   (next.time[upper:] == cb.systime[upper:32] + lookahead)):
             m.d.comb += state_next.on_ticks.eq(next.on_ticks)
-            m.d.comb += state_next.off_ticks.eq(next.off_ticks)
+            m.d.comb += state_next.off_ticks.eq(cycle_ticks - next.on_ticks)
             m.d.comb += state_next.duration.eq(conf.max_duration)
             m.d.sync += out_req.bit_select(curr, 1).eq(1)
             with m.If(next.on_ticks == 0):
@@ -181,7 +197,7 @@ class PWM(Elaboratable):
                 m.d.comb += toggle.en.eq(1)
                 m.d.comb += toggle.val.eq(0)
                 m.d.comb += base_toggle_at.eq(next.time)
-            with m.Elif(next.off_ticks == 0):
+            with m.Elif(next.on_ticks >= cycle_ticks):
                 m.d.comb += state_next.running.eq(0)
                 m.d.comb += toggle.en.eq(1)
                 m.d.comb += toggle.val.eq(1)
@@ -227,7 +243,7 @@ class PWM(Elaboratable):
             with m.If(t.en):
                 with m.If(t.thresh == cb.systime[:upper]):
                     m.d.comb += pwm_next[channel].eq(t.val)
-            
+
         m.d.sync += pwm.eq(pwm_next)
 
         next_time_in = Signal(32)
@@ -250,6 +266,10 @@ class PWM(Elaboratable):
         m.d.comb += conf_w.addr.eq(channel)
         m.d.comb += conf_w.data.eq(conf_next)
         m.d.sync += conf_w.en.eq(0)
+        cycle_ticks_next = Signal(pwm_bits)
+        m.d.comb += cycle_ticks_w.addr.eq(channel)
+        m.d.comb += cycle_ticks_w.data.eq(cycle_ticks_next)
+        m.d.sync += cycle_ticks_w.en.eq(0)
         m.d.sync += mq.in_data.eq(0)
         with m.FSM():
             with m.State('IDLE'):
@@ -259,8 +279,12 @@ class PWM(Elaboratable):
                     with m.Switch(cb.cmd):
                         with m.Case(self.CMD_CONFIG):
                             m.next = 'CONFIG_1'
-                        with m.Case(self.CMD_SCHEDULE):
-                            m.next = 'SCHEDULE_1'
+                        with m.Case(self.CMD_SET):
+                            m.next = 'SET_1'
+                        with m.Case(self.CMD_SET_CYCLE):
+                            m.next = 'SET_CYCLE_1'
+                        with m.Case(self.CMD_QUEUE):
+                            m.next = 'QUEUE_1'
                         with m.Default():
                             m.d.sync += cb.cmd_done.eq(1)
             with m.State('CONFIG_1'):
@@ -274,25 +298,45 @@ class PWM(Elaboratable):
                 m.d.sync += conf_w.en.eq(1)
                 m.d.sync += cb.cmd_done.eq(1)
                 m.next = 'IDLE'
-            with m.State('SCHEDULE_1'):
-                m.d.sync += next_time_in.eq(cb.arg_data)
-                #with m.If (((cb.arg_data - cb.systime[:32]) >= 0xc0000000) |
-                #           ((cb.arg_data - cb.systime[:32]) == 0x00000000)):
-                #    m.d.sync += self.missed_clock.eq(1)
-                m.next = 'SCHEDULE_2'
-            with m.State('SCHEDULE_2'):
-                m.d.sync += next_on_ticks_in.eq(cb.arg_data)
-                m.next = 'SCHEDULE_3'
-            with m.State('SCHEDULE_3'):
-                m.d.sync += next_off_ticks_in.eq(cb.arg_data)
-                #m.d.sync += scheduled[channel].eq(1)
+            with m.State('SET_1'):
+                with m.If(~mq.empty.bit_select(channel, 1)):
+                    m.d.sync += self.missed_clock.eq(1)
                 m.d.sync += mq.in_req.bit_select(channel, 1).eq(1)
-                m.next = 'SCHEDULE_4'
-            with m.State('SCHEDULE_4'):
-                m.d.sync += cb.cmd_done.eq(1)
+                with m.If(cb.arg_data[0]):
+                    m.d.sync += next_on_ticks_in.eq((1 << npwm_bits) - 1)
+                with m.Else():
+                    m.d.sync += next_on_ticks_in.eq(0)
+                m.d.sync += next_time_in.eq(cb.systime + 2 * npwm_bits)
+                m.next = 'SET_2'
+            with m.State('SET_2'):
                 with m.If(mq.in_ack.any()):
                     m.d.sync += mq.in_data.eq(Cat(next_on_ticks_in,
-                        next_off_ticks_in, next_time_in))
+                        next_time_in))
+                    m.d.sync += mq.in_req.eq(0)
+                    m.d.sync += cb.cmd_done.eq(1)
+                    m.next = 'IDLE'
+                m.d.sync += pwm.bit_select(channel, 1).eq(cb.arg_data[0])
+                m.d.sync += cb.cmd_done.eq(1)
+                m.next = 'IDLE'
+            with m.State('SET_CYCLE_1'):
+                with m.If(~mq.empty.bit_select(channel, 1)):
+                    m.d.sync += self.missed_clock.eq(1)
+                m.d.sync += cycle_ticks_next.eq(cb.arg_data)
+                m.d.sync += cycle_ticks_w.en.eq(1)
+                m.d.sync += cb.cmd_done.eq(1)
+                m.next = 'IDLE'
+            with m.State('QUEUE_1'):
+                m.d.sync += next_time_in.eq(cb.arg_data)
+                m.next = 'QUEUE_2'
+            with m.State('QUEUE_2'):
+                m.d.sync += next_on_ticks_in.eq(cb.arg_data)
+                m.d.sync += mq.in_req.bit_select(channel, 1).eq(1)
+                m.next = 'QUEUE_3'
+            with m.State('QUEUE_3'):
+                with m.If(mq.in_ack.any()):
+                    m.d.sync += cb.cmd_done.eq(1)
+                    m.d.sync += mq.in_data.eq(Cat(next_on_ticks_in,
+                        next_time_in))
                     m.d.sync += mq.in_req.eq(0)
                     m.next = 'IDLE'
 
@@ -317,7 +361,7 @@ def generate():
             self.pwm = Signal(pwm.npwm)
             self.shutdown = Signal()
             self.missed_clock = Signal()
-            
+
         def elaborate(self, platform):
             pwm = self.m_pwm
             cmd = pwm.cmd
@@ -340,12 +384,12 @@ def generate():
                 cmd.shutdown.eq(self.shutdown),
                 self.missed_clock.eq(pwm.missed_clock),
             ]
-        
+
             return m
 
     cmdbus = CmdBusMaster(first_cmd=3)
     #mq = MoveQueue(width=72)
-    mq = MoveQueue(width=2 * 26 + 32)
+    mq = MoveQueue(width = 26 + 32)
     npwm = 16
     pwm = PWM(cmdbus, mq, npwm = npwm)
     mq.configure()
@@ -402,6 +446,7 @@ def simulate():
                 fail("signal never asserted")
             i = i + 1
             yield
+        return i
 
     def test_pwm_check_cycle(systime, pwm, duty, period, cycles=3):
         yield from wait_for_signal(pwm, 0)
@@ -431,7 +476,7 @@ def simulate():
 #        for i in [4]:
             assert (yield pwm.pwm[i]) == 0
             # channel, value, default_value, max_duration
-            yield from cmdbus.sim_write('CMD_CONFIG_PWM',
+            yield from cmdbus.sim_write('CMD_CONFIG_DIGITAL_OUT',
                 channel = i, value = 1, default_value = 0, max_duration = 1000)
 
             # check pwm value and that it stays on it
@@ -439,16 +484,19 @@ def simulate():
                 assert (yield pwm.pwm[i]) == 1
                 yield
 
+            yield from cmdbus.sim_write('CMD_SET_DIGITAL_OUT_PWM_CYCLE',
+                channel = i, cycle_ticks = 100)
+
             now = yield cmdbus.master.systime
-            yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
-                channel = i, clock = now + 50, on_ticks = 20, off_ticks = 80)
+            yield from cmdbus.sim_write('CMD_QUEUE_DIGITAL_OUT',
+                channel = i, clock = now + 50, on_ticks = 20)
 
             yield from test_pwm_check_cycle(systime, pwm.pwm[i], 20, 100)
 
             sched = (yield systime) + 400
             print("writing second schedule at %d" % (yield systime))
-            yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
-                channel = i, clock = sched, on_ticks = 55, off_ticks = 45)
+            yield from cmdbus.sim_write('CMD_QUEUE_DIGITAL_OUT',
+                channel = i, clock = sched, on_ticks = 55)
             yield from test_pwm_check_cycle(systime, pwm.pwm[i], 20, 100)
             for _ in range(300):
                 yield
@@ -462,16 +510,16 @@ def simulate():
                 yield
 
             sched = (yield systime) + 300
-            yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
-                channel = i, clock = sched, on_ticks = 21, off_ticks = 79)
+            yield from cmdbus.sim_write('CMD_QUEUE_DIGITAL_OUT',
+                channel = i, clock = sched, on_ticks = 21)
             for _ in range(300):
                 yield
             yield from test_pwm_check_cycle(systime, pwm.pwm[i], 21, 100);
 
             # test always on
             sched = (yield systime) + 300
-            yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
-                channel = i, clock = sched, on_ticks = 1, off_ticks = 0)
+            yield from cmdbus.sim_write('CMD_QUEUE_DIGITAL_OUT',
+                channel = i, clock = sched, on_ticks = 100)
             for _ in range(300):
                 yield
             for _ in range(101):
@@ -480,8 +528,8 @@ def simulate():
 
             # test always off
             sched = (yield systime) + 300
-            yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
-                channel = i, clock = sched, on_ticks = 0, off_ticks = 1)
+            yield from cmdbus.sim_write('CMD_QUEUE_DIGITAL_OUT',
+                channel = i, clock = sched, on_ticks = 0)
             for _ in range(300):
                 yield
             for _ in range(101):
@@ -490,8 +538,8 @@ def simulate():
 
             # same again
             sched = (yield systime) + 300
-            yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
-                channel = i, clock = sched, on_ticks = 0, off_ticks = 1)
+            yield from cmdbus.sim_write('CMD_QUEUE_DIGITAL_OUT',
+                channel = i, clock = sched, on_ticks = 0)
             for _ in range(300):
                 yield
             for _ in range(101):
@@ -499,17 +547,35 @@ def simulate():
                 yield
 
             sched = (yield systime) + 300
-            yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
-                channel = i, clock = sched, on_ticks = 22, off_ticks = 78)
+            yield from cmdbus.sim_write('CMD_QUEUE_DIGITAL_OUT',
+                channel = i, clock = sched, on_ticks = 22)
             for _ in range(300):
                 yield
             yield from test_pwm_check_cycle(systime, pwm.pwm[i], 22, 100);
 
+            yield from cmdbus.sim_write('CMD_SET_DIGITAL_OUT_PWM_CYCLE',
+                channel = i, cycle_ticks = 49)
+
             now = yield cmdbus.master.systime
-            yield from cmdbus.sim_write('CMD_SCHEDULE_PWM',
-                channel = i, clock = now + 50, on_ticks = 17, off_ticks = 32)
+            yield from cmdbus.sim_write('CMD_QUEUE_DIGITAL_OUT',
+                channel = i, clock = now + 50, on_ticks = 17)
 
             yield from test_pwm_check_cycle(systime, pwm.pwm[i], 17, 49, 16)
+
+            yield from cmdbus.sim_write('CMD_SET_DIGITAL_OUT',
+                channel = i, value = 1)
+
+            for _ in range(60):
+                yield
+
+            l = yield from wait_for_signal(pwm.pwm[i], 1)
+            if l > 3 * npwm:
+                fail("failed to set to 1 in time, took %d" % l)
+            print("set to 1 took %d" % l)
+
+            l = yield from wait_for_signal(pwm.pwm[i], 0)
+            fail("failed to set to default 0 in time, took %d" % l)
+
 
     sim = Simulator(top)
     sim.add_clock(1e-6)
